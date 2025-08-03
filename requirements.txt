@@ -1,0 +1,7 @@
+flask
+requests
+mss
+numpy
+opencv-python
+pywin32
+PyAudio
