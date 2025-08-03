@@ -79,6 +79,12 @@ except ImportError:
     SPEECH_RECOGNITION_AVAILABLE = False
 import psutil
 from PIL import Image
+import platform
+try:
+    import pyautogui
+    PYAUTOGUI_AVAILABLE = True
+except ImportError:
+    PYAUTOGUI_AVAILABLE = False
 
 SERVER_URL = "http://localhost:8080"  # Change to your controller's URL
 
@@ -1863,12 +1869,10 @@ def stream_screen(agent_id):
     """
     global STREAMING_ENABLED
     
+    # For now, skip high-performance capture and use fallback
     try:
-        from high_performance_capture import HighPerformanceCapture, AdaptiveQualityManager
-        
-        # Initialize high-performance capture
-        capture = HighPerformanceCapture(target_fps=60, quality=85, enable_delta_compression=True)
-        quality_manager = AdaptiveQualityManager(capture)
+        # This will be implemented when we reorganize the code
+        raise ImportError("Using fallback streaming for now")
         
         url = f"{SERVER_URL}/stream/{agent_id}"
         headers = {'Content-Type': 'image/jpeg'}
@@ -3711,8 +3715,9 @@ except ImportError:
     HAS_MSGPACK = False
 
 # Performance optimizations
-pyautogui.FAILSAFE = False
-pyautogui.PAUSE = 0  # Remove delay between commands
+if PYAUTOGUI_AVAILABLE:
+    pyautogui.FAILSAFE = False
+    pyautogui.PAUSE = 0  # Remove delay between commands
 
 class LowLatencyInputHandler:
     """Ultra-low latency input handling system"""
