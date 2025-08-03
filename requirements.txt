@@ -3,7 +3,10 @@ requests
 mss
 numpy
 opencv-python
-pywin32
 PyAudio
 pynput
 pygame
+speechrecognition
+websockets
+psutil
+pillow
