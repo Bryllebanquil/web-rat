@@ -5,3 +5,5 @@ numpy
 opencv-python
 pywin32
 PyAudio
+pynput
+pygame
