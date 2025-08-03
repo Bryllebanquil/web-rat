@@ -3377,3 +3377,1199 @@ if __name__ == "__main__":
         stop_clipboard_monitor()
         stop_reverse_shell()
         stop_voice_control()
+
+# ========================================================================================
+# HIGH PERFORMANCE CAPTURE MODULE
+# From: high_performance_capture.py
+# ========================================================================================
+
+#!/usr/bin/env python3
+"""
+High-Performance Screen Capture Module
+Optimized for 60+ FPS streaming with sub-100ms latency
+"""
+
+# Platform-specific imports for high performance capture
+if platform.system() == "Windows":
+    try:
+        import dxcam
+        HAS_DXCAM = True
+    except ImportError:
+        HAS_DXCAM = False
+else:
+    HAS_DXCAM = False
+
+try:
+    from turbojpeg import TurboJPEG
+    HAS_TURBOJPEG = True
+except ImportError:
+    HAS_TURBOJPEG = False
+
+try:
+    import lz4.frame
+    HAS_LZ4 = True
+except ImportError:
+    HAS_LZ4 = False
+
+try:
+    import xxhash
+    HAS_XXHASH = True
+except ImportError:
+    HAS_XXHASH = False
+
+class HighPerformanceCapture:
+    """High-performance screen capture with hardware acceleration support"""
+    
+    def __init__(self, target_fps: int = 60, quality: int = 85, 
+                 enable_delta_compression: bool = True):
+        self.target_fps = target_fps
+        self.frame_time = 1.0 / target_fps
+        self.quality = quality
+        self.enable_delta_compression = enable_delta_compression
+        
+        # Initialize capture backend
+        self.capture_backend = None
+        self._init_capture_backend()
+        
+        # Initialize compression
+        self.turbo_jpeg = None
+        if HAS_TURBOJPEG:
+            self.turbo_jpeg = TurboJPEG()
+        
+        # Frame management
+        self.last_frame = None
+        self.last_frame_hash = None
+        self.frame_buffer = []
+        self.buffer_size = 3  # Triple buffering
+        
+        # Statistics
+        self.fps_counter = 0
+        self.fps_start_time = time.time()
+        self.actual_fps = 0
+        
+        self.running = False
+        self.capture_thread = None
+    
+    def _init_capture_backend(self):
+        """Initialize the best available capture backend for the platform"""
+        if HAS_DXCAM and platform.system() == "Windows":
+            try:
+                self.capture_backend = dxcam.create(output_color="RGB")
+                self.backend_type = "dxcam"
+            except Exception as e:
+                self._fallback_to_mss()
+        else:
+            self._fallback_to_mss()
+    
+    def _fallback_to_mss(self):
+        """Fallback to MSS capture"""
+        self.capture_backend = mss.mss()
+        self.backend_type = "mss"
+    
+    def _get_backend_name(self) -> str:
+        """Get the name of the current backend"""
+        if hasattr(self, 'backend_type'):
+            return self.backend_type.upper()
+        return "Unknown"
+    
+    def capture_frame(self, region=None):
+        """Capture a single frame with optimal performance"""
+        try:
+            if self.backend_type == "dxcam" and self.capture_backend:
+                # DXcam capture (Windows only)
+                if region:
+                    frame = self.capture_backend.grab(region=region)
+                else:
+                    frame = self.capture_backend.grab()
+                
+                if frame is None:
+                    return None
+                    
+                # DXcam returns RGB, no conversion needed
+                return frame
+                
+            elif self.backend_type == "mss":
+                # MSS capture
+                if region:
+                    monitor = {"left": region[0], "top": region[1], 
+                              "width": region[2] - region[0], 
+                              "height": region[3] - region[1]}
+                else:
+                    monitor = self.capture_backend.monitors[1]
+                
+                screenshot = self.capture_backend.grab(monitor)
+                frame = np.array(screenshot)
+                
+                # Convert BGRA to RGB
+                if frame.shape[2] == 4:
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2RGB)
+                elif frame.shape[2] == 3:
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                
+                return frame
+                
+        except Exception as e:
+            return None
+        
+        return None
+    
+    def encode_frame(self, frame, force_keyframe: bool = False):
+        """Encode frame with optimal compression"""
+        if frame is None:
+            return None
+        
+        try:
+            # Delta compression check
+            if self.enable_delta_compression and not force_keyframe:
+                if HAS_XXHASH:
+                    frame_hash = xxhash.xxh64(frame.tobytes()).hexdigest()
+                    if frame_hash == self.last_frame_hash:
+                        # No change, return empty data or delta marker
+                        return b'DELTA_UNCHANGED'
+                    self.last_frame_hash = frame_hash
+            
+            # Resize for performance if needed
+            height, width = frame.shape[:2]
+            if width > 1920:
+                scale = 1920 / width
+                new_width = int(width * scale)
+                new_height = int(height * scale)
+                frame = cv2.resize(frame, (new_width, new_height), 
+                                 interpolation=cv2.INTER_AREA)
+            
+            # Use TurboJPEG if available (faster)
+            if HAS_TURBOJPEG and self.turbo_jpeg:
+                # Convert RGB to BGR for TurboJPEG
+                frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                encoded = self.turbo_jpeg.encode(frame_bgr, quality=self.quality)
+            else:
+                # Fallback to OpenCV
+                frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                success, encoded = cv2.imencode('.jpg', frame_bgr, 
+                    [cv2.IMWRITE_JPEG_QUALITY, self.quality,
+                     cv2.IMWRITE_JPEG_OPTIMIZE, 1])
+                if not success:
+                    return None
+                encoded = encoded.tobytes()
+            
+            # Optional LZ4 compression for additional bandwidth savings
+            if HAS_LZ4 and len(encoded) > 1024:  # Only compress larger frames
+                compressed = lz4.frame.compress(encoded, compression_level=1)
+                if len(compressed) < len(encoded):
+                    return b'LZ4_COMPRESSED' + compressed
+            
+            self.last_frame = frame.copy()
+            return encoded
+            
+        except Exception as e:
+            return None
+    
+    def start_capture_stream(self, callback, region=None):
+        """Start continuous capture stream"""
+        if self.running:
+            return
+        
+        self.running = True
+        self.capture_thread = threading.Thread(
+            target=self._capture_loop, 
+            args=(callback, region),
+            daemon=True
+        )
+        self.capture_thread.start()
+    
+    def _capture_loop(self, callback, region):
+        """Main capture loop optimized for low latency"""
+        last_time = time.time()
+        frame_count = 0
+        
+        while self.running:
+            loop_start = time.time()
+            
+            # Capture frame
+            frame = self.capture_frame(region)
+            if frame is not None:
+                # Encode frame
+                encoded = self.encode_frame(frame)
+                if encoded and encoded != b'DELTA_UNCHANGED':
+                    callback(encoded)
+                
+                frame_count += 1
+            
+            # FPS calculation
+            current_time = time.time()
+            if current_time - self.fps_start_time >= 1.0:
+                self.actual_fps = frame_count
+                frame_count = 0
+                self.fps_start_time = current_time
+            
+            # Precise timing control
+            elapsed = time.time() - loop_start
+            sleep_time = max(0, self.frame_time - elapsed)
+            
+            if sleep_time > 0:
+                # Use high-precision sleep
+                if sleep_time > 0.001:
+                    time.sleep(sleep_time - 0.001)
+                
+                # Busy wait for final precision
+                target_time = loop_start + self.frame_time
+                while time.time() < target_time:
+                    pass
+    
+    def stop_capture_stream(self):
+        """Stop capture stream"""
+        self.running = False
+        if self.capture_thread:
+            self.capture_thread.join(timeout=2.0)
+    
+    def get_stats(self) -> dict:
+        """Get capture statistics"""
+        return {
+            "backend": self._get_backend_name(),
+            "target_fps": self.target_fps,
+            "actual_fps": self.actual_fps,
+            "quality": self.quality,
+            "delta_compression": self.enable_delta_compression,
+            "turbojpeg": HAS_TURBOJPEG,
+            "lz4": HAS_LZ4
+        }
+    
+    def set_quality(self, quality: int):
+        """Dynamically adjust encoding quality"""
+        self.quality = max(10, min(100, quality))
+    
+    def set_fps(self, fps: int):
+        """Dynamically adjust target FPS"""
+        self.target_fps = max(10, min(120, fps))
+        self.frame_time = 1.0 / self.target_fps
+    
+    def __del__(self):
+        """Cleanup"""
+        self.stop_capture_stream()
+        if hasattr(self, 'capture_backend') and self.backend_type == "dxcam":
+            try:
+                if hasattr(self.capture_backend, 'release'):
+                    self.capture_backend.release()
+            except:
+                pass
+
+
+class AdaptiveQualityManager:
+    """Manages adaptive quality based on network conditions"""
+    
+    def __init__(self, capture):
+        self.capture = capture
+        self.bandwidth_samples = []
+        self.max_samples = 30
+        self.last_adjustment = time.time()
+        self.adjustment_interval = 2.0  # seconds
+    
+    def update_bandwidth(self, bytes_sent: int, time_elapsed: float):
+        """Update bandwidth measurement"""
+        if time_elapsed > 0:
+            bandwidth = bytes_sent / time_elapsed
+            self.bandwidth_samples.append(bandwidth)
+            
+            if len(self.bandwidth_samples) > self.max_samples:
+                self.bandwidth_samples.pop(0)
+            
+            # Adaptive quality adjustment
+            current_time = time.time()
+            if current_time - self.last_adjustment > self.adjustment_interval:
+                self._adjust_quality()
+                self.last_adjustment = current_time
+    
+    def _adjust_quality(self):
+        """Adjust quality based on bandwidth"""
+        if len(self.bandwidth_samples) < 5:
+            return
+        
+        avg_bandwidth = sum(self.bandwidth_samples) / len(self.bandwidth_samples)
+        current_quality = self.capture.quality
+        
+        # Simple adaptive algorithm
+        if avg_bandwidth < 500000:  # < 500KB/s
+            new_quality = max(current_quality - 10, 30)
+        elif avg_bandwidth > 2000000:  # > 2MB/s
+            new_quality = min(current_quality + 5, 95)
+        else:
+            return  # No change needed
+        
+        if new_quality != current_quality:
+            self.capture.set_quality(new_quality)
+
+# ========================================================================================
+# LOW LATENCY INPUT MODULE
+# From: low_latency_input.py
+# ========================================================================================
+
+# Fast serialization
+try:
+    import msgpack
+    HAS_MSGPACK = True
+except ImportError:
+    HAS_MSGPACK = False
+
+# Performance optimizations
+pyautogui.FAILSAFE = False
+pyautogui.PAUSE = 0  # Remove delay between commands
+
+class LowLatencyInputHandler:
+    """Ultra-low latency input handling system"""
+    
+    def __init__(self, max_queue_size: int = 1000):
+        self.max_queue_size = max_queue_size
+        self.input_queue = queue.Queue(maxsize=max_queue_size)
+        self.processing_thread = None
+        self.running = False
+        
+        # Input controllers
+        self.mouse_controller = mouse.Controller()
+        self.keyboard_controller = keyboard.Controller()
+        
+        # Performance tracking
+        self.input_count = 0
+        self.last_input_time = time.time()
+        self.processing_times = []
+        
+        # Input state caching for smooth movement
+        self.last_mouse_pos = self.mouse_controller.position
+        self.mouse_acceleration = 1.0
+        self.smooth_mouse = True
+    
+    def start(self):
+        """Start the input processing thread"""
+        if self.running:
+            return
+        
+        self.running = True
+        self.processing_thread = threading.Thread(
+            target=self._process_input_loop,
+            daemon=True
+        )
+        self.processing_thread.start()
+    
+    def stop(self):
+        """Stop input processing"""
+        self.running = False
+        if self.processing_thread:
+            self.processing_thread.join(timeout=1.0)
+    
+    def handle_input(self, input_data) -> bool:
+        """Queue input for processing"""
+        try:
+            if self.input_queue.full():
+                # Drop oldest input if queue is full (prefer latest)
+                try:
+                    self.input_queue.get_nowait()
+                except queue.Empty:
+                    pass
+            
+            # Add timestamp for latency measurement
+            input_data['timestamp'] = time.time()
+            self.input_queue.put_nowait(input_data)
+            return True
+            
+        except queue.Full:
+            return False
+    
+    def _process_input_loop(self):
+        """Main input processing loop"""
+        while self.running:
+            try:
+                # Get input with timeout
+                input_data = self.input_queue.get(timeout=0.1)
+                
+                # Measure processing latency
+                process_start = time.time()
+                received_time = input_data.get('timestamp', process_start)
+                
+                # Process the input
+                self._execute_input(input_data)
+                
+                # Track performance
+                process_time = time.time() - process_start
+                total_latency = time.time() - received_time
+                
+                self._update_performance_stats(process_time, total_latency)
+                self.input_count += 1
+                
+            except queue.Empty:
+                continue
+            except Exception as e:
+                pass
+    
+    def _execute_input(self, input_data):
+        """Execute the input command with optimal performance"""
+        action = input_data.get('action')
+        data = input_data.get('data', {})
+        
+        try:
+            if action == 'mouse_move':
+                self._handle_mouse_move(data)
+            elif action == 'mouse_click':
+                self._handle_mouse_click(data)
+            elif action == 'mouse_scroll':
+                self._handle_mouse_scroll(data)
+            elif action == 'key_press':
+                self._handle_key_press(data)
+            elif action == 'key_release':
+                self._handle_key_release(data)
+            elif action == 'key_type':
+                self._handle_key_type(data)
+                
+        except Exception as e:
+            pass
+    
+    def _handle_mouse_move(self, data):
+        """Handle mouse movement with smoothing"""
+        try:
+            # Get coordinates
+            if 'absolute' in data:
+                x, y = data['absolute']['x'], data['absolute']['y']
+                
+                # Apply acceleration/sensitivity
+                sensitivity = data.get('sensitivity', 1.0)
+                if sensitivity != 1.0:
+                    current_x, current_y = self.mouse_controller.position
+                    x = current_x + (x - current_x) * sensitivity
+                    y = current_y + (y - current_y) * sensitivity
+                
+                # Direct position setting (fastest)
+                self.mouse_controller.position = (int(x), int(y))
+                
+            elif 'relative' in data:
+                dx, dy = data['relative']['x'], data['relative']['y']
+                sensitivity = data.get('sensitivity', 1.0)
+                
+                # Apply relative movement
+                current_x, current_y = self.mouse_controller.position
+                new_x = current_x + int(dx * sensitivity)
+                new_y = current_y + int(dy * sensitivity)
+                
+                self.mouse_controller.position = (new_x, new_y)
+            
+            # Update cached position
+            self.last_mouse_pos = self.mouse_controller.position
+            
+        except Exception as e:
+            pass
+    
+    def _handle_mouse_click(self, data):
+        """Handle mouse clicks"""
+        try:
+            button_map = {
+                'left': mouse.Button.left,
+                'right': mouse.Button.right,
+                'middle': mouse.Button.middle
+            }
+            
+            button = data.get('button', 'left')
+            clicks = data.get('clicks', 1)
+            pressed = data.get('pressed', True)
+            
+            mouse_button = button_map.get(button, mouse.Button.left)
+            
+            if pressed:
+                for _ in range(clicks):
+                    self.mouse_controller.click(mouse_button)
+            else:
+                # Handle button release if needed
+                pass
+                
+        except Exception as e:
+            pass
+    
+    def _handle_mouse_scroll(self, data):
+        """Handle mouse scrolling"""
+        try:
+            dx = data.get('dx', 0)
+            dy = data.get('dy', 0)
+            
+            if dx != 0 or dy != 0:
+                self.mouse_controller.scroll(dx, dy)
+                
+        except Exception as e:
+            pass
+    
+    def _handle_key_press(self, data):
+        """Handle key press"""
+        try:
+            key = data.get('key')
+            if not key:
+                return
+            
+            # Handle special keys
+            if key.startswith('Key.'):
+                # Special key like Key.enter, Key.ctrl, etc.
+                key_name = key[4:]  # Remove 'Key.' prefix
+                special_key = getattr(keyboard.Key, key_name, None)
+                if special_key:
+                    self.keyboard_controller.press(special_key)
+            else:
+                # Regular character
+                self.keyboard_controller.press(key)
+                
+        except Exception as e:
+            pass
+    
+    def _handle_key_release(self, data):
+        """Handle key release"""
+        try:
+            key = data.get('key')
+            if not key:
+                return
+            
+            # Handle special keys
+            if key.startswith('Key.'):
+                key_name = key[4:]
+                special_key = getattr(keyboard.Key, key_name, None)
+                if special_key:
+                    self.keyboard_controller.release(special_key)
+            else:
+                self.keyboard_controller.release(key)
+                
+        except Exception as e:
+            pass
+    
+    def _handle_key_type(self, data):
+        """Handle text typing"""
+        try:
+            text = data.get('text', '')
+            if text:
+                # Use direct character typing for best performance
+                for char in text:
+                    self.keyboard_controller.press(char)
+                    self.keyboard_controller.release(char)
+                
+        except Exception as e:
+            pass
+    
+    def _update_performance_stats(self, process_time: float, total_latency: float):
+        """Update performance statistics"""
+        self.processing_times.append({
+            'process_time': process_time,
+            'total_latency': total_latency,
+            'timestamp': time.time()
+        })
+        
+        # Keep only recent samples
+        if len(self.processing_times) > 1000:
+            self.processing_times.pop(0)
+    
+    def get_performance_stats(self):
+        """Get performance statistics"""
+        if not self.processing_times:
+            return {
+                'input_count': self.input_count,
+                'queue_size': self.input_queue.qsize(),
+                'avg_process_time': 0,
+                'avg_latency': 0,
+                'max_latency': 0,
+                'min_latency': 0
+            }
+        
+        recent_times = self.processing_times[-100:]  # Last 100 samples
+        process_times = [t['process_time'] for t in recent_times]
+        latencies = [t['total_latency'] for t in recent_times]
+        
+        return {
+            'input_count': self.input_count,
+            'queue_size': self.input_queue.qsize(),
+            'avg_process_time': sum(process_times) / len(process_times) * 1000,  # ms
+            'avg_latency': sum(latencies) / len(latencies) * 1000,  # ms
+            'max_latency': max(latencies) * 1000,  # ms
+            'min_latency': min(latencies) * 1000,  # ms
+            'samples': len(recent_times)
+        }
+    
+    def set_mouse_acceleration(self, acceleration: float):
+        """Set mouse acceleration factor"""
+        self.mouse_acceleration = max(0.1, min(5.0, acceleration))
+    
+    def clear_queue(self):
+        """Clear the input queue"""
+        while not self.input_queue.empty():
+            try:
+                self.input_queue.get_nowait()
+            except queue.Empty:
+                break
+
+
+class InputMessageEncoder:
+    """Fast message encoding/decoding for input data"""
+    
+    def __init__(self):
+        self.use_msgpack = HAS_MSGPACK
+    
+    def encode(self, data) -> bytes:
+        """Encode input data to bytes"""
+        try:
+            if self.use_msgpack:
+                return msgpack.packb(data)
+            else:
+                return json.dumps(data).encode('utf-8')
+        except Exception as e:
+            return b''
+    
+    def decode(self, data: bytes):
+        """Decode bytes to input data"""
+        try:
+            if self.use_msgpack:
+                return msgpack.unpackb(data, raw=False)
+            else:
+                return json.loads(data.decode('utf-8'))
+        except Exception as e:
+            return None
+
+# ========================================================================================
+# WEBSOCKET STREAMING MODULE
+# From: websocket_streaming.py
+# ========================================================================================
+
+try:
+    import uvloop
+    HAS_UVLOOP = True
+except ImportError:
+    HAS_UVLOOP = False
+
+class WebSocketStreamingServer:
+    """High-performance WebSocket streaming server"""
+    
+    def __init__(self, host: str = "localhost", port: int = 8765, 
+                 max_clients: int = 10, target_fps: int = 60):
+        self.host = host
+        self.port = port
+        self.max_clients = max_clients
+        self.target_fps = target_fps
+        
+        # Client management
+        self.clients = set()
+        self.client_stats = {}
+        
+        # Streaming components
+        self.capture = None
+        self.frame_queue = queue.Queue(maxsize=120)  # 2 seconds buffer at 60fps
+        self.running = False
+        
+        # Performance tracking
+        self.frames_sent = 0
+        self.bytes_sent = 0
+        self.start_time = time.time()
+    
+    async def start_server(self):
+        """Start the WebSocket server"""
+        if HAS_UVLOOP and hasattr(asyncio, 'set_event_loop_policy'):
+            asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+        
+        self.running = True
+        
+        # Initialize capture system
+        try:
+            self.capture = HighPerformanceCapture(
+                target_fps=self.target_fps, 
+                quality=85, 
+                enable_delta_compression=True
+            )
+            self.capture.start_capture_stream(self._frame_callback)
+        except:
+            return
+        
+        # Start frame distribution task
+        asyncio.create_task(self._distribute_frames())
+        
+        # Start the WebSocket server
+        async with websockets.serve(
+            self._handle_client,
+            self.host,
+            self.port,
+            max_size=1024*1024*10,  # 10MB max message size
+            ping_interval=20,
+            ping_timeout=10,
+            compression=None  # Disable compression for speed
+        ):
+            await asyncio.Future()  # Run forever
+    
+    async def _handle_client(self, websocket, path):
+        """Handle new client connection"""
+        client_id = f"{websocket.remote_address[0]}:{websocket.remote_address[1]}"
+        
+        if len(self.clients) >= self.max_clients:
+            await websocket.close(code=1013, reason="Server full")
+            return
+        
+        self.clients.add(websocket)
+        self.client_stats[client_id] = {
+            'connected_at': time.time(),
+            'frames_sent': 0,
+            'bytes_sent': 0,
+            'last_activity': time.time()
+        }
+        
+        try:
+            # Send initial connection message
+            await self._send_to_client(websocket, {
+                'type': 'connection',
+                'message': 'Connected to high-performance stream',
+                'fps': self.target_fps,
+                'features': {
+                    'high_performance_capture': True,
+                    'msgpack': HAS_MSGPACK,
+                    'uvloop': HAS_UVLOOP
+                }
+            })
+            
+            # Handle client messages
+            async for message in websocket:
+                await self._handle_client_message(websocket, client_id, message)
+                
+        except websockets.exceptions.ConnectionClosed:
+            pass
+        except Exception as e:
+            pass
+        finally:
+            self.clients.discard(websocket)
+            self.client_stats.pop(client_id, None)
+    
+    async def _handle_client_message(self, websocket, client_id: str, message: str):
+        """Handle incoming client messages"""
+        try:
+            data = json.loads(message)
+            msg_type = data.get('type')
+            
+            if msg_type == 'ping':
+                await self._send_to_client(websocket, {'type': 'pong', 'timestamp': time.time()})
+            elif msg_type == 'stats_request':
+                stats = self._get_server_stats()
+                await self._send_to_client(websocket, {'type': 'stats', 'data': stats})
+            elif msg_type == 'quality_change':
+                new_quality = data.get('quality', 85)
+                if self.capture:
+                    self.capture.set_quality(new_quality)
+                await self._send_to_client(websocket, {
+                    'type': 'quality_changed', 
+                    'quality': new_quality
+                })
+            
+            # Update client activity
+            self.client_stats[client_id]['last_activity'] = time.time()
+            
+        except json.JSONDecodeError:
+            pass
+        except Exception as e:
+            pass
+    
+    def _frame_callback(self, frame_data: bytes):
+        """Callback for captured frames"""
+        if frame_data and frame_data != b'DELTA_UNCHANGED':
+            try:
+                # Add frame to queue (non-blocking)
+                if not self.frame_queue.full():
+                    self.frame_queue.put_nowait({
+                        'data': frame_data,
+                        'timestamp': time.time()
+                    })
+                else:
+                    # Drop oldest frame if queue is full
+                    try:
+                        self.frame_queue.get_nowait()
+                        self.frame_queue.put_nowait({
+                            'data': frame_data,
+                            'timestamp': time.time()
+                        })
+                    except queue.Empty:
+                        pass
+            except Exception as e:
+                pass
+    
+    async def _distribute_frames(self):
+        """Distribute frames to all connected clients"""
+        while self.running:
+            try:
+                # Get frame from queue (non-blocking)
+                try:
+                    frame_data = self.frame_queue.get_nowait()
+                except queue.Empty:
+                    await asyncio.sleep(0.001)  # 1ms sleep
+                    continue
+                
+                if not self.clients:
+                    continue
+                
+                # Prepare frame message
+                frame_message = {
+                    'type': 'frame',
+                    'timestamp': frame_data['timestamp'],
+                    'data': base64.b64encode(frame_data['data']).decode('utf-8')
+                }
+                
+                # Handle different frame types
+                if frame_data['data'].startswith(b'LZ4_COMPRESSED'):
+                    frame_message['encoding'] = 'lz4'
+                    frame_message['data'] = base64.b64encode(frame_data['data'][14:]).decode('utf-8')
+                
+                # Send to all clients concurrently
+                tasks = []
+                for client in list(self.clients):  # Create a copy to avoid modification during iteration
+                    tasks.append(self._send_frame_to_client(client, frame_message))
+                
+                if tasks:
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                
+                self.frames_sent += 1
+                self.bytes_sent += len(frame_data['data'])
+                
+            except Exception as e:
+                await asyncio.sleep(0.01)
+    
+    async def _send_frame_to_client(self, websocket, frame_message):
+        """Send frame to a specific client"""
+        try:
+            if websocket in self.clients:
+                if HAS_MSGPACK:
+                    # Use MessagePack for better performance
+                    data = msgpack.packb(frame_message)
+                    await websocket.send(data)
+                else:
+                    # Fallback to JSON
+                    await websocket.send(json.dumps(frame_message))
+                
+                # Update client stats
+                client_id = f"{websocket.remote_address[0]}:{websocket.remote_address[1]}"
+                if client_id in self.client_stats:
+                    self.client_stats[client_id]['frames_sent'] += 1
+                    self.client_stats[client_id]['bytes_sent'] += len(frame_message.get('data', ''))
+                    
+        except websockets.exceptions.ConnectionClosed:
+            self.clients.discard(websocket)
+        except Exception as e:
+            pass
+    
+    async def _send_to_client(self, websocket, message):
+        """Send a message to a specific client"""
+        try:
+            if HAS_MSGPACK:
+                data = msgpack.packb(message)
+                await websocket.send(data)
+            else:
+                await websocket.send(json.dumps(message))
+        except Exception as e:
+            pass
+    
+    def _get_server_stats(self):
+        """Get server performance statistics"""
+        uptime = time.time() - self.start_time
+        avg_fps = self.frames_sent / uptime if uptime > 0 else 0
+        avg_bandwidth = self.bytes_sent / uptime if uptime > 0 else 0
+        
+        capture_stats = {}
+        if self.capture:
+            capture_stats = self.capture.get_stats()
+        
+        return {
+            'uptime': uptime,
+            'connected_clients': len(self.clients),
+            'frames_sent': self.frames_sent,
+            'bytes_sent': self.bytes_sent,
+            'avg_fps': avg_fps,
+            'avg_bandwidth': avg_bandwidth,
+            'frame_queue_size': self.frame_queue.qsize(),
+            'capture_stats': capture_stats,
+            'client_stats': self.client_stats
+        }
+    
+    def stop_server(self):
+        """Stop the streaming server"""
+        self.running = False
+        if self.capture:
+            self.capture.stop_capture_stream()
+
+# ========================================================================================
+# OPTIMIZED DASHBOARD HTML CONTENT
+# From: optimized_dashboard.html
+# ========================================================================================
+
+OPTIMIZED_DASHBOARD_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>High-Performance Dashboard - 60 FPS Streaming</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e1e1e 0%, #2d2d2d 100%);
+            color: #ffffff;
+            overflow-x: hidden;
+        }
+        .header {
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px 20px;
+            border-bottom: 2px solid #00ff88;
+            backdrop-filter: blur(10px);
+        }
+        .header h1 {
+            color: #00ff88;
+            text-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
+        }
+        .performance-badge {
+            display: inline-block;
+            background: linear-gradient(45deg, #ff6b6b, #feca57);
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-left: 15px;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 300px;
+            height: calc(100vh - 80px);
+            gap: 20px;
+            padding: 20px;
+        }
+        .stream-container {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 15px;
+            padding: 20px;
+            border: 1px solid rgba(0, 255, 136, 0.3);
+            position: relative;
+            overflow: hidden;
+        }
+        .stream-video {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            border-radius: 10px;
+            background: #000;
+        }
+        .stream-overlay {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 10px;
+            min-width: 200px;
+        }
+        .fps-counter {
+            font-size: 24px;
+            font-weight: bold;
+            color: #00ff88;
+            text-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
+        }
+        .latency-indicator {
+            margin-top: 10px;
+        }
+        .latency-value {
+            font-size: 18px;
+            font-weight: bold;
+        }
+        .latency-low { color: #00ff88; }
+        .latency-medium { color: #feca57; }
+        .latency-high { color: #ff6b6b; }
+        .controls-panel {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 15px;
+            padding: 20px;
+            border: 1px solid rgba(0, 255, 136, 0.3);
+            height: fit-content;
+        }
+        .control-section {
+            margin-bottom: 25px;
+        }
+        .control-section h3 {
+            color: #00ff88;
+            margin-bottom: 15px;
+            font-size: 16px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .btn {
+            background: linear-gradient(45deg, #00ff88, #00d4aa);
+            border: none;
+            padding: 12px 20px;
+            border-radius: 8px;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+            margin: 5px;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            width: 100%;
+        }
+        .btn:hover {
+            background: linear-gradient(45deg, #00d4aa, #00ff88);
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 255, 136, 0.4);
+        }
+        .btn-danger {
+            background: linear-gradient(45deg, #ff6b6b, #ff4757);
+        }
+        .btn-danger:hover {
+            background: linear-gradient(45deg, #ff4757, #ff6b6b);
+            box-shadow: 0 5px 15px rgba(255, 107, 107, 0.4);
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>High-Performance Dashboard<span class="performance-badge">60 FPS • Sub-2s Latency</span></h1>
+    </div>
+    <div class="container">
+        <div class="stream-container">
+            <img id="streamVideo" class="stream-video" alt="High-Performance Stream" />
+            <div class="stream-overlay">
+                <div class="fps-counter"><span id="fpsValue">0</span> FPS</div>
+                <div class="latency-indicator">Latency: <span id="latencyValue" class="latency-value latency-low">0ms</span></div>
+            </div>
+        </div>
+        <div class="controls-panel">
+            <div class="control-section">
+                <h3>Stream Control</h3>
+                <button class="btn" onclick="startOptimizedStream()">Start 60 FPS Stream</button>
+                <button class="btn btn-danger" onclick="stopStream()">Stop Stream</button>
+                <button class="btn" onclick="startWebSocketStream()">WebSocket Stream</button>
+            </div>
+        </div>
+    </div>
+    <script>
+        let streamActive = false;
+        let webSocketStream = null;
+        let frameCount = 0;
+        let startTime = Date.now();
+
+        function startWebSocketStream() {
+            if (webSocketStream) {
+                webSocketStream.close();
+            }
+            webSocketStream = new WebSocket('ws://localhost:8765');
+            
+            webSocketStream.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'frame') {
+                        updateStreamFrame(data);
+                    }
+                } catch (e) {
+                    console.error('WebSocket message error:', e);
+                }
+            };
+        }
+
+        function updateStreamFrame(frameData) {
+            const streamVideo = document.getElementById('streamVideo');
+            streamVideo.src = 'data:image/jpeg;base64,' + frameData.data;
+            
+            frameCount++;
+            const now = Date.now();
+            const elapsed = (now - startTime) / 1000;
+            const fps = Math.round(frameCount / elapsed);
+            document.getElementById('fpsValue').textContent = fps;
+            
+            const latency = now - (frameData.timestamp * 1000);
+            document.getElementById('latencyValue').textContent = Math.round(latency) + 'ms';
+        }
+
+        function startOptimizedStream() {
+            streamActive = true;
+            console.log('Optimized stream started');
+        }
+
+        function stopStream() {
+            streamActive = false;
+            if (webSocketStream) {
+                webSocketStream.close();
+                webSocketStream = null;
+            }
+            console.log('Stream stopped');
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            setTimeout(startWebSocketStream, 1000);
+        });
+    </script>
+</body>
+</html>"""
+
+# ========================================================================================
+# PROCESS TERMINATION TEST FUNCTIONS
+# From: test_process_termination.py
+# ========================================================================================
+
+def test_process_termination_functionality():
+    """Test enhanced process termination with admin privileges functionality."""
+    print("Enhanced Process Termination Test")
+    print("=" * 40)
+    
+    # Check current privileges
+    if WINDOWS_AVAILABLE:
+        if is_admin():
+            print("✓ Running with administrator privileges")
+        else:
+            print("⚠ Running with user privileges")
+            print("Attempting to elevate privileges...")
+            if elevate_privileges():
+                print("✓ Privilege escalation successful")
+            else:
+                print("✗ Privilege escalation failed")
+                print("Some termination methods may fail")
+    else:
+        print("✓ Running on Linux/Unix system")
+        if os.geteuid() == 0:
+            print("✓ Running as root")
+        else:
+            print("⚠ Running as regular user")
+    
+    print("\nAvailable commands:")
+    print("1. kill-taskmgr - Terminate Task Manager")
+    print("2. terminate <process_name> - Terminate process by name")
+    print("3. terminate <pid> - Terminate process by PID")
+    print("4. quit - Exit")
+    
+    while True:
+        try:
+            command = input("\nEnter command: ").strip().lower()
+            
+            if command == "quit" or command == "exit":
+                break
+            elif command == "kill-taskmgr":
+                print("Attempting to terminate Task Manager...")
+                result = kill_task_manager()
+                print(f"Result: {result}")
+            elif command.startswith("terminate "):
+                target = command.split(" ", 1)[1]
+                
+                # Try to convert to PID if it's a number
+                try:
+                    target = int(target)
+                    print(f"Attempting to terminate process with PID {target}...")
+                except ValueError:
+                    print(f"Attempting to terminate process '{target}'...")
+                
+                result = terminate_process_with_admin(target, force=True)
+                print(f"Result: {result}")
+            else:
+                print("Unknown command. Use 'kill-taskmgr', 'terminate <name/pid>', or 'quit'")
+                
+        except KeyboardInterrupt:
+            print("\nExiting...")
+            break
+        except Exception as e:
+            print(f"Error: {e}")
+
+# ========================================================================================
+# END OF COMBINED MODULES
+# ========================================================================================
