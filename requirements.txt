@@ -10,3 +10,5 @@ speechrecognition
 websockets
 psutil
 pillow
+pywin32
+WMI
