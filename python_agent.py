@@ -2382,6 +2382,24 @@ LOW_LATENCY_INPUT_HANDLER = None
 MOUSE_CONTROLLER = None
 KEYBOARD_CONTROLLER = None
 
+def enable_remote_control():
+    """Enable remote control functionality."""
+    global REMOTE_CONTROL_ENABLED
+    REMOTE_CONTROL_ENABLED = True
+    print("Remote control enabled")
+    return True
+
+def disable_remote_control():
+    """Disable remote control functionality."""
+    global REMOTE_CONTROL_ENABLED
+    REMOTE_CONTROL_ENABLED = False
+    print("Remote control disabled")
+    return True
+
+def is_remote_control_enabled():
+    """Check if remote control is enabled."""
+    return REMOTE_CONTROL_ENABLED
+
 def initialize_low_latency_input():
     """Initialize the low-latency input handler"""
     global LOW_LATENCY_INPUT_HANDLER
@@ -2996,15 +3014,32 @@ def main_loop(agent_id):
                 else:
                     output = "Invalid terminate-process command format"
                 requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
+            elif command == "enable-remote-control":
+                # Enable remote control
+                enable_remote_control()
+                requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": "Remote control enabled"})
+            elif command == "disable-remote-control":
+                # Disable remote control
+                disable_remote_control()
+                requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": "Remote control disabled"})
+            elif command == "remote-control-status":
+                # Check remote control status
+                status = "enabled" if is_remote_control_enabled() else "disabled"
+                requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": f"Remote control is {status}"})
             elif command.startswith("{") and "remote_control" in command:
                 # Handle remote control commands (JSON format)
                 try:
                     import json
                     command_data = json.loads(command)
                     if command_data.get("type") == "remote_control":
-                        handle_remote_control(command_data)
-                        # Send success response
-                        requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": "Remote control command executed"})
+                        # Check if remote control is enabled before processing
+                        if REMOTE_CONTROL_ENABLED:
+                            handle_remote_control(command_data)
+                            # Send success response
+                            requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": "Remote control command executed"})
+                        else:
+                            # Remote control is disabled, ignore the command
+                            requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": "Remote control is disabled"})
                 except Exception as e:
                     requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": f"Remote control error: {e}"})
             elif command != "sleep":
