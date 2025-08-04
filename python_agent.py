@@ -86,7 +86,7 @@ try:
 except ImportError:
     PYAUTOGUI_AVAILABLE = False
 
-SERVER_URL = "http://localhost:8080"  # Change to your controller's URL
+SERVER_URL = os.getenv("CONTROLLER_URL", "http://localhost:8080")  # Change to your controller's URL
 
 # --- Privilege Escalation Functions ---
 
