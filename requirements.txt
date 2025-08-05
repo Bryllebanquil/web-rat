@@ -39,3 +39,5 @@ py-cpuinfo
 # Additional missing dependencies
 turbojpeg
 pyautogui
+# Additional dependencies used in code
+python-dotenv

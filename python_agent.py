@@ -73,6 +73,11 @@ import json
 import asyncio
 import websockets
 try:
+    import websocket
+    WEBSOCKET_CLIENT_AVAILABLE = True
+except ImportError:
+    WEBSOCKET_CLIENT_AVAILABLE = False
+try:
     import speech_recognition as sr
     SPEECH_RECOGNITION_AVAILABLE = True
 except ImportError:
