@@ -5,3 +5,9 @@ numpy
 opencv-python
 pywin32
 PyAudio
+pynput
+pygame
+Flask-SocketIO
+python-socketio
+eventlet
+websocket-client
